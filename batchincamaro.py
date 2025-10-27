@@ -327,6 +327,17 @@ class App(tk.Tk):
         self.max_heading_chars = tk.IntVar(value=120)
         self.split_on_separators = tk.BooleanVar(value=True)
         self.min_separator_len = tk.IntVar(value=5)
+        # Section selection
+        self.start_line = tk.IntVar(value=1)
+        self.end_line = tk.IntVar(value=-1)  # -1 means end of file
+        self.use_line_range = tk.BooleanVar(value=False)
+        # Delimiter control
+        self.csv_delimiter = tk.StringVar(value=",")
+        # Header handling
+        self.has_header_row = tk.BooleanVar(value=False)
+        self.skip_header = tk.BooleanVar(value=False)
+        self.custom_title_header = tk.StringVar(value="title")
+        self.custom_content_header = tk.StringVar(value="content")
 
         # Menu
         mbar = tk.Menu(self)
@@ -401,18 +412,40 @@ class App(tk.Tk):
         fr_txt = ttk.LabelFrame(left, text="TXT → CSV parsing")
         fr_txt.pack(fill="x", padx=10, pady=8)
         for i in (1,3,5): fr_txt.columnconfigure(i, weight=1)
+        
+        # Row 0: Line filtering and heading detection
         ttk.Label(fr_txt, text="Ignore lines shorter than:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_txt, textvariable=self.min_line_len, width=10).grid(row=0, column=1, sticky="w", padx=6, pady=6)
         ttk.Label(fr_txt, text="Min heading chars:").grid(row=0, column=2, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_txt, textvariable=self.min_heading_chars, width=10).grid(row=0, column=3, sticky="w", padx=6, pady=6)
         ttk.Label(fr_txt, text="Max heading chars:").grid(row=0, column=4, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_txt, textvariable=self.max_heading_chars, width=10).grid(row=0, column=5, sticky="w", padx=6, pady=6)
+        
+        # Row 1: Detection options
         ttk.Checkbutton(fr_txt, text="Detect ALL CAPS headings", variable=self.detect_all_caps).grid(row=1, column=0, sticky="w", padx=6, pady=6)
         ttk.Checkbutton(fr_txt, text="Detect Title Case headings", variable=self.detect_title_case).grid(row=1, column=1, sticky="w", padx=6, pady=6)
         ttk.Checkbutton(fr_txt, text="Detect numbered headings", variable=self.detect_numbered).grid(row=1, column=2, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_txt, text="Split on separator lines (====, ----, ***)", variable=self.split_on_separators).grid(row=1, column=3, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Min separator run length:").grid(row=1, column=4, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.min_separator_len, width=10).grid(row=1, column=5, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(fr_txt, text="Split on separator lines (====, ----, ***)", variable=self.split_on_separators).grid(row=1, column=3, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_txt, text="Min separator len:").grid(row=1, column=5, sticky="w", padx=6, pady=6)
+        
+        # Row 2: Section selection
+        ttk.Checkbutton(fr_txt, text="Parse specific line range", variable=self.use_line_range).grid(row=2, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_txt, text="Start line:").grid(row=2, column=1, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_txt, textvariable=self.start_line, width=10).grid(row=2, column=2, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_txt, text="End line (-1=end):").grid(row=2, column=3, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_txt, textvariable=self.end_line, width=10).grid(row=2, column=4, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_txt, textvariable=self.min_separator_len, width=10).grid(row=2, column=5, sticky="w", padx=6, pady=6)
+        
+        # Row 3: CSV output delimiter
+        ttk.Label(fr_txt, text="CSV delimiter:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_txt, textvariable=self.csv_delimiter, width=10).grid(row=3, column=1, sticky="w", padx=6, pady=6)
+        
+        # Row 4: Header handling
+        ttk.Checkbutton(fr_txt, text="First row is header (skip it)", variable=self.has_header_row).grid(row=4, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_txt, text="Title header name:").grid(row=4, column=1, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_txt, textvariable=self.custom_title_header, width=12).grid(row=4, column=2, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_txt, text="Content header name:").grid(row=4, column=3, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_txt, textvariable=self.custom_content_header, width=12).grid(row=4, column=4, sticky="w", padx=6, pady=6)
 
         # Prompt
         fr_prompt = ttk.LabelFrame(left, text="System Prompt (default per mode)")
@@ -576,9 +609,12 @@ class App(tk.Tk):
         try:
             if mode == "TXT → CSV (parse)":
                 recs = self._parse_txt_records()
+                delimiter = self.csv_delimiter.get() or ","
+                title_header = self.custom_title_header.get() or "title"
+                content_header = self.custom_content_header.get() or "content"
                 with open(out_path, "w", encoding="utf-8", newline="") as fh:
-                    w = csv.writer(fh)
-                    w.writerow(["title","content"])
+                    w = csv.writer(fh, delimiter=delimiter)
+                    w.writerow([title_header, content_header])
                     for r in recs: w.writerow([r["title"], r["content"]])
                 count = len(recs); size = Path(out_path).stat().st_size
             else:
@@ -731,7 +767,16 @@ class App(tk.Tk):
     def _make_common_prefix_preview(self) -> str:
         mode = self.mode.get()
         if mode == "TXT → CSV (parse)":
-            return "(CSV output) Columns: title, content"
+            delimiter = self.csv_delimiter.get() or ","
+            title_h = self.custom_title_header.get() or "title"
+            content_h = self.custom_content_header.get() or "content"
+            delim_name = {"\\t": "tab", ",": "comma", ";": "semicolon", "|": "pipe"}.get(delimiter, delimiter)
+            info = f"CSV output with {delim_name} delimiter\nColumns: {title_h}, {content_h}"
+            if self.use_line_range.get():
+                info += f"\nParsing lines {self.start_line.get()} to {self.end_line.get() if self.end_line.get() > 0 else 'end'}"
+            if self.has_header_row.get():
+                info += "\nSkipping first row as header"
+            return info
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
             return (
@@ -843,14 +888,39 @@ class App(tk.Tk):
     def _prev_txt_csv(self):
         if not self.txt_path.get(): return "Choose a TXT file."
         try:
+            # Show raw text preview first (limited lines)
+            p = Path(self.txt_path.get().strip())
+            if not p.is_file():
+                return "TXT file not found."
+            
+            try:
+                full_txt = p.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                full_txt = p.read_text(encoding="latin-1", errors="ignore")
+            
+            lines = full_txt.split('\n')
+            preview_info = f"Total lines in file: {len(lines)}\n"
+            
+            if self.use_line_range.get():
+                start_idx = max(0, int(self.start_line.get()) - 1)
+                end_idx = int(self.end_line.get())
+                if end_idx < 0 or end_idx > len(lines):
+                    end_idx = len(lines)
+                preview_info += f"Parsing lines {start_idx + 1} to {end_idx}\n"
+            
+            preview_info += "\n=== Parsed Records Preview ===\n"
+            
             recs = self._parse_txt_records()
+            preview_info += f"Total parsed records: {len(recs)}\n\n"
+            
+            out = [preview_info]
+            for i, r in enumerate(recs[:PREVIEW_LINES], 1):
+                title = r["title"] or "(no title)"
+                content_preview = r['content'][:200] + "..." if len(r['content']) > 200 else r['content']
+                out.append(f"Record {i}:\n  Title: {title}\n  Content: {content_preview}\n---")
+            return "\n".join(out) if len(out) > 1 else out[0] + "(no records)"
         except Exception as e:
             return f"(parse error) {e}"
-        out=[]; n=0
-        for r in recs[:PREVIEW_LINES]:
-            title = r["title"] or "(no title)"
-            out.append(f"title: {title}\ncontent:\n{r['content']}\n---"); n+=1
-        return "\n".join(out) if out else "(no records)"
 
     # ----- helpers -----
     def _parse_txt_records(self):
@@ -861,6 +931,24 @@ class App(tk.Tk):
             txt = p.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             txt = p.read_text(encoding="latin-1", errors="ignore")
+        
+        # Handle section selection if enabled
+        if self.use_line_range.get():
+            lines = txt.split('\n')
+            start_idx = max(0, int(self.start_line.get()) - 1)  # Convert to 0-indexed
+            end_idx = int(self.end_line.get())
+            if end_idx < 0 or end_idx > len(lines):
+                end_idx = len(lines)
+            lines = lines[start_idx:end_idx]
+            txt = '\n'.join(lines)
+        
+        # Skip header row if enabled
+        if self.has_header_row.get():
+            lines = txt.split('\n')
+            if lines:
+                lines = lines[1:]  # Skip first line
+                txt = '\n'.join(lines)
+        
         cfg = {
             "min_line_len": max(0, int(self.min_line_len.get())),
             "detect_all_caps": bool(self.detect_all_caps.get()),
