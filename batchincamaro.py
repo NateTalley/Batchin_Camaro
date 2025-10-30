@@ -36,6 +36,8 @@ APP_TITLE = "🏎️ Batchin' Camaro"
 PREVIEW_LINES = 20
 DEFAULT_PREFIX = "request-"
 
+MODE_DEJSONL = "De-JSONL (batch output → CSV)"
+
 MODES = [
     "Batch Inference (CSV)",
     "Finetune: Chat",
@@ -43,6 +45,7 @@ MODES = [
     "Finetune: Completions",
     "Docs → Batch Inference",
     "TXT → CSV (parse)",
+    MODE_DEJSONL,
 ]
 
 DEFAULT_PROMPTS = {
@@ -54,6 +57,7 @@ DEFAULT_PROMPTS = {
         "You are a helpful assistant. Use only the provided context to answer. "
         "If the answer isn't in the context, say you don't know."
     ),
+    MODE_DEJSONL: "",
 }
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".rst", ".text", ".pdf", ".docx", ".rtf", ".csv"}
@@ -295,11 +299,13 @@ class App(tk.Tk):
 
         # CSV state
         self.csv_path = tk.StringVar()
+        self.batch_jsonl_path = tk.StringVar()
         self.out_path = tk.StringVar()
         self.rows, self.headers = [], []
         self.content_col = tk.StringVar()
         self.id_col = tk.StringVar(value="<None>")
         self.prefix_id = tk.StringVar(value=DEFAULT_PREFIX)
+        self.dejsonl_city_col = tk.StringVar()
         # Finetune mappings
         self.assistant_col = tk.StringVar()
         self.instruct_in_col = tk.StringVar()
@@ -368,6 +374,9 @@ class App(tk.Tk):
         self.lbl_in_csv = ttk.Label(fr_paths, text="Input CSV:")
         self.ent_in_csv = ttk.Entry(fr_paths, textvariable=self.csv_path)
         self.btn_in_csv = ttk.Button(fr_paths, text="Open…", command=self.menu_open_csv, width=12)
+        self.lbl_jsonl = ttk.Label(fr_paths, text="Batch output JSONL:")
+        self.ent_jsonl = ttk.Entry(fr_paths, textvariable=self.batch_jsonl_path)
+        self.btn_jsonl = ttk.Button(fr_paths, text="Open…", command=self.menu_open_jsonl, width=12)
         # Docs
         self.lbl_docs = ttk.Label(fr_paths, text="Docs folder:")
         self.ent_docs = ttk.Entry(fr_paths, textvariable=self.docs_dir)
@@ -391,6 +400,7 @@ class App(tk.Tk):
         self.lbl_out_instruct = ttk.Label(fr_cols, text="Output column:"); self.cb_out_instruct = ttk.Combobox(fr_cols, textvariable=self.instruct_out_col)
         self.lbl_prompt_comp = ttk.Label(fr_cols, text="Prompt column:"); self.cb_prompt_comp = ttk.Combobox(fr_cols, textvariable=self.comp_prompt_col)
         self.lbl_completion_comp = ttk.Label(fr_cols, text="Completion column:"); self.cb_completion_comp = ttk.Combobox(fr_cols, textvariable=self.comp_completion_col)
+        self.lbl_city_dejsonl = ttk.Label(fr_cols, text="City column:"); self.cb_city_dejsonl = ttk.Combobox(fr_cols, textvariable=self.dejsonl_city_col)
 
         # Docs chunking
         fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); fr_docs.pack(fill="x", padx=10, pady=8)
@@ -491,12 +501,14 @@ class App(tk.Tk):
 
     def layout_for_mode(self):
         for w in (self.lbl_in_csv, self.ent_in_csv, self.btn_in_csv,
+                  self.lbl_jsonl, self.ent_jsonl, self.btn_jsonl,
                   self.lbl_docs, self.ent_docs, self.btn_docs,
                   self.lbl_txt, self.ent_txt, self.btn_txt):
             try: w.grid_forget()
             except Exception: pass
 
         mode = self.mode.get()
+        self.lbl_in_csv.configure(text="Input CSV:")
         if mode == "Docs → Batch Inference":
             self.lbl_docs.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_docs.grid(row=0, column=1, sticky="we", padx=6, pady=6)
@@ -505,6 +517,14 @@ class App(tk.Tk):
             self.lbl_txt.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_txt.grid(row=0, column=1, sticky="we", padx=6, pady=6)
             self.btn_txt.grid(row=0, column=2, padx=6, pady=6)
+        elif mode == MODE_DEJSONL:
+            self.lbl_in_csv.configure(text="Original CSV:")
+            self.lbl_in_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
+            self.ent_in_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
+            self.btn_in_csv.grid(row=0, column=2, padx=6, pady=6)
+            self.lbl_jsonl.grid(row=1, column=0, sticky="w", padx=6, pady=6)
+            self.ent_jsonl.grid(row=1, column=1, sticky="we", padx=6, pady=6)
+            self.btn_jsonl.grid(row=1, column=2, padx=6, pady=6)
         else:
             self.lbl_in_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_in_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
@@ -513,11 +533,13 @@ class App(tk.Tk):
         for w in (self.lbl_content,self.cb_content,self.lbl_id,self.cb_id,self.lbl_prefix,self.ent_prefix,
                   self.lbl_asst,self.cb_asst,self.lbl_in_instruct,self.cb_in_instruct,
                   self.lbl_out_instruct,self.cb_out_instruct,self.lbl_prompt_comp,self.cb_prompt_comp,
-                  self.lbl_completion_comp,self.cb_completion_comp):
+                  self.lbl_completion_comp,self.cb_completion_comp,
+                  self.lbl_city_dejsonl,self.cb_city_dejsonl):
             try: w.grid_forget()
             except Exception: pass
 
         r=0
+        self.lbl_content.configure(text="Content column (user):")
         if mode == "Batch Inference (CSV)":
             self.lbl_content.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_content.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_id.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_id.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
@@ -531,6 +553,12 @@ class App(tk.Tk):
         elif mode == "Finetune: Completions":
             self.lbl_prompt_comp.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_prompt_comp.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_completion_comp.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_completion_comp.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
+        elif mode == MODE_DEJSONL:
+            self.lbl_content.configure(text="Content column to update:")
+            self.lbl_content.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_content.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
+            self.lbl_id.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_id.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
+            self.lbl_prefix.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.ent_prefix.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
+            self.lbl_city_dejsonl.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_city_dejsonl.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
 
         self._set_group_state("Docs Chunking", "normal" if mode=="Docs → Batch Inference" else "disabled")
         self._set_group_state("TXT → CSV parsing", "normal" if mode=="TXT → CSV (parse)" else "disabled")
@@ -555,6 +583,11 @@ class App(tk.Tk):
         if not path: return
         self.load_csv(path); self.refresh_preview()
 
+    def menu_open_jsonl(self):
+        path = filedialog.askopenfilename(title="Select batch output JSONL", filetypes=[("JSON Lines","*.jsonl"),("All files","*.*")])
+        if not path: return
+        self.batch_jsonl_path.set(path); self.refresh_preview()
+
     def menu_open_txt(self):
         path = filedialog.askopenfilename(title="Select TXT", filetypes=[("Text files","*.txt"),("All files","*.*")])
         if not path: return
@@ -562,7 +595,7 @@ class App(tk.Tk):
 
     def menu_save_output(self):
         mode = self.mode.get()
-        if mode == "TXT → CSV (parse)":
+        if mode in ("TXT → CSV (parse)", MODE_DEJSONL):
             ftypes = [("CSV files","*.csv"),("All files","*.*")]
             dflt = ".csv"
         else:
@@ -591,21 +624,38 @@ class App(tk.Tk):
 
         self.csv_path.set(path)
         vals = self.headers
-        for cb in (self.cb_content,self.cb_asst,self.cb_in_instruct,self.cb_out_instruct,self.cb_prompt_comp,self.cb_completion_comp):
+        for cb in (self.cb_content,self.cb_asst,self.cb_in_instruct,self.cb_out_instruct,self.cb_prompt_comp,self.cb_completion_comp,self.cb_city_dejsonl):
             cb.configure(values=vals)
         self.cb_id.configure(values=["<None>"]+vals)
         guess = self._guess_content_col(self.headers)
         self.content_col.set(guess if guess else (vals[0] if vals else ""))
         self.id_col.set("<None>")
+        current_city = self.dejsonl_city_col.get()
+        if (not current_city) or (current_city not in self.headers):
+            guess_city = self._guess_city_col(self.headers)
+            if guess_city:
+                self.dejsonl_city_col.set(guess_city)
+            elif vals:
+                self.dejsonl_city_col.set(vals[0])
         self.status.set(f"Loaded {len(self.rows)} rows, {len(self.headers)} columns.")
-        if not self.out_path.get() and self.mode.get()!="TXT → CSV (parse)":
-            base = os.path.splitext(os.path.basename(path))[0]; self.out_path.set(f"{base}_batch.jsonl")
+        if not self.out_path.get():
+            base = os.path.splitext(os.path.basename(path))[0]
+            mode = self.mode.get()
+            if mode == MODE_DEJSONL:
+                self.out_path.set(f"{base}_responses.csv")
+            elif mode == "TXT → CSV (parse)":
+                self.out_path.set(f"{base}.csv")
+            else:
+                self.out_path.set(f"{base}_batch.jsonl")
 
     # ----- build -----
     def build_output(self):
         mode = self.mode.get()
         out_path = self._ensure_out_path()
         if not out_path: return
+        csv_mode = False
+        extra_msg = ""
+        status_text = ""
         try:
             if mode == "TXT → CSV (parse)":
                 recs = self._parse_txt_records()
@@ -617,6 +667,16 @@ class App(tk.Tk):
                     w.writerow([title_header, content_header])
                     for r in recs: w.writerow([r["title"], r["content"]])
                 count = len(recs); size = Path(out_path).stat().st_size
+                csv_mode = True
+                status_text = f"Finished: {count} → {os.path.basename(out_path)}"
+            elif mode == MODE_DEJSONL:
+                count, size, updated, resp_count, warn_msg = self._build_dejsonl(out_path)
+                csv_mode = True
+                parts = [f"Updated {updated} rows from {resp_count} responses."]
+                if warn_msg:
+                    parts.append(warn_msg)
+                extra_msg = "\n".join(parts).strip()
+                status_text = f"Finished: {count} rows ({updated} updated) → {os.path.basename(out_path)}"
             else:
                 with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
                     if mode == "Batch Inference (CSV)":
@@ -629,12 +689,18 @@ class App(tk.Tk):
                         count, size = self._build_finetune_completions(fh)
                     else:
                         count, size = self._build_docs_batch(fh)
+                status_text = f"Finished: {count} → {os.path.basename(out_path)}"
         except Exception as e:
             messagebox.showerror("Write Error", f"Failed to write output:\n{e}")
             self.status.set("Build failed."); return
 
         suffix = Path(out_path).suffix.lower()
-        if suffix == ".jsonl":
+        if csv_mode:
+            msg = f"Wrote {count} rows\n{out_path}"
+            if extra_msg:
+                msg += f"\n{extra_msg}"
+            messagebox.showinfo("Done", msg)
+        elif suffix == ".jsonl":
             size_mb = size / (1024*1024)
             if size_mb > 500:
                 messagebox.showwarning("Size Warning", f"Saved but exceeds 500MB: {size_mb:.1f} MB")
@@ -642,15 +708,16 @@ class App(tk.Tk):
                 messagebox.showinfo("Done", f"Wrote {count} lines\n{out_path}\nSize: {size_mb:.1f} MB")
         else:
             messagebox.showinfo("Done", f"Wrote {count} rows\n{out_path}")
-        self.status.set(f"Finished: {count} → {os.path.basename(out_path)}")
+        self.status.set(status_text if status_text else f"Finished: {count} → {os.path.basename(out_path)}")
 
     def _ensure_out_path(self):
         out_path = self.out_path.get().strip()
         if not out_path:
             self.menu_save_output(); out_path = self.out_path.get().strip()
             if not out_path: return None
+        mode = self.mode.get()
         if Path(out_path).suffix == "":
-            if self.mode.get()=="TXT → CSV (parse)":
+            if mode in ("TXT → CSV (parse)", MODE_DEJSONL):
                 out_path += ".csv"
             else:
                 out_path += ".jsonl"
@@ -756,6 +823,112 @@ class App(tk.Tk):
         if written==0: raise ValueError("No chunks produced from documents.")
         return written, size_bytes
 
+    def _build_dejsonl(self, out_path: str):
+        if not self.rows or not self.headers:
+            raise ValueError("Load the original CSV first.")
+        jsonl_path = self.batch_jsonl_path.get().strip()
+        if not jsonl_path:
+            raise ValueError("Select the batch output JSONL file.")
+        responses, warn_msg = self._parse_jsonl_responses(jsonl_path)
+        rows_out, updated = self._prepare_dejsonl_rows(responses)
+        city_header = self.dejsonl_city_col.get().strip() or "city"
+        content_header = self.content_col.get().strip() or "content"
+        with open(out_path, "w", encoding="utf-8", newline="") as fh:
+            writer = csv.writer(fh, quoting=csv.QUOTE_ALL)
+            writer.writerow([city_header, content_header])
+            for city, content in rows_out:
+                writer.writerow([city, content])
+        size = Path(out_path).stat().st_size
+        return len(rows_out), size, updated, len(responses), warn_msg or ""
+
+    def _prepare_dejsonl_rows(self, responses: dict[str, str]):
+        if not self.rows or not self.headers:
+            raise ValueError("Load the original CSV first.")
+        content_col = self.content_col.get().strip()
+        if content_col not in self.headers:
+            raise ValueError("Select a valid content column to update.")
+        city_col = self.dejsonl_city_col.get().strip()
+        if city_col not in self.headers:
+            raise ValueError("Select a valid city column.")
+        id_choice = self.id_col.get().strip()
+        use_id_col = id_choice and id_choice != "<None>" and id_choice in self.headers
+        prefix = self.prefix_id.get().strip() or DEFAULT_PREFIX
+        seen: set[str] = set()
+        rows_out: list[tuple[str, str]] = []
+        updated = 0
+        for idx, row in enumerate(self.rows, start=1):
+            base_id = (str(row.get(id_choice, "")).strip() if use_id_col else "")
+            if not base_id:
+                base_id = f"{prefix}{idx}"
+            cid = base_id
+            bump = 1
+            original_content = (row.get(content_col) or "").strip()
+            if original_content:
+                while cid in seen:
+                    bump += 1
+                    cid = f"{base_id}-{bump}"
+                seen.add(cid)
+            response_text = responses.get(cid)
+            if response_text is not None:
+                updated += 1
+                final_content = response_text.strip()
+            else:
+                final_content = original_content
+            city_val = row.get(city_col, "")
+            city_txt = "" if city_val is None else str(city_val).strip()
+            rows_out.append((city_txt, final_content))
+        return rows_out, updated
+
+    def _parse_jsonl_responses(self, path: str, *, log_debug: bool = True):
+        p = Path(path)
+        if not p.is_file():
+            raise ValueError(f"Batch output JSONL not found: {path}")
+        responses: dict[str, str] = {}
+        warn_msg = ""
+        has_failed_once = False
+        try:
+            with p.open("r", encoding="utf-8") as fh:
+                for line_num, line in enumerate(fh, 1):
+                    if not line.strip():
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError as exc:
+                        raise ValueError(f"Could not decode JSON on line {line_num}: {exc}") from exc
+                    custom_id = data.get("custom_id")
+                    try:
+                        raw_content = data["response"]["choices"][0]["message"]["content"]
+                    except (KeyError, IndexError, TypeError) as exc:
+                        if not has_failed_once:
+                            if log_debug:
+                                print("\n" + "="*60)
+                                print("DEBUGGING INFO: Encountered a parsing error.")
+                                print(f"Could not find expected data in JSON on line {line_num}.")
+                                print(f"Error Type: {type(exc).__name__}, Details: {exc}")
+                                print("Here is the full structure of the failing JSON object:")
+                                try:
+                                    print(json.dumps(data, indent=2))
+                                except Exception:
+                                    print(str(data))
+                                print("="*60 + "\n")
+                            warn_msg = f"Skipped malformed response on line {line_num}."
+                            has_failed_once = True
+                        continue
+                    if not custom_id:
+                        if not has_failed_once:
+                            warn_msg = f"Skipped entry without custom_id on line {line_num}."
+                            has_failed_once = True
+                        continue
+                    content_text = raw_content if isinstance(raw_content, str) else str(raw_content)
+                    responses[custom_id] = (content_text or "").strip()
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"Could not decode '{path}': {exc}") from exc
+        except OSError as exc:
+            raise ValueError(f"Failed to read JSONL file: {exc}") from exc
+        if not responses:
+            raise ValueError("No responses were parsed from the JSONL file.")
+        return responses, warn_msg
+
     # ----- preview -----
     def refresh_preview(self):
         prefix = self._make_common_prefix_preview()
@@ -777,6 +950,14 @@ class App(tk.Tk):
             if self.has_header_row.get():
                 info += "\nSkipping first row as header"
             return info
+        if mode == MODE_DEJSONL:
+            city_h = self.dejsonl_city_col.get().strip() or "city"
+            content_h = self.content_col.get().strip() or "content"
+            return (
+                "CSV output from batch responses\n"
+                f"Columns: {city_h}, {content_h}\n"
+                "Values quoted to preserve formatting."
+            )
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
             return (
@@ -810,6 +991,8 @@ class App(tk.Tk):
                 return self._prev_ft_compl()
             if mode == "Docs → Batch Inference":
                 return self._prev_docs_batch()
+            if mode == MODE_DEJSONL:
+                return self._prev_dejsonl()
             return self._prev_txt_csv()
         except Exception as e:
             return f"(preview error) {e}"
@@ -884,6 +1067,38 @@ class App(tk.Tk):
                 out.append(f"[{Path(fp).name} | chunk {j}]\n{t}\n---"); n+=1
                 if n>=PREVIEW_LINES: return "\n".join(out)
         return "\n".join(out) if out else "(no chunks produced)"
+
+    def _prev_dejsonl(self):
+        if not self.rows or not self.headers:
+            return "Load the original CSV to preview."
+        jsonl_path = self.batch_jsonl_path.get().strip()
+        if not jsonl_path:
+            return "Choose a batch output JSONL file."
+        try:
+            responses, warn_msg = self._parse_jsonl_responses(jsonl_path, log_debug=False)
+        except Exception as e:
+            return f"(preview error) {e}"
+        try:
+            rows_out, updated = self._prepare_dejsonl_rows(responses)
+        except Exception as e:
+            return f"(preview error) {e}"
+        parts = [
+            f"Responses parsed: {len(responses)}",
+            f"Rows updated: {updated} / {len(rows_out)}",
+        ]
+        if warn_msg:
+            parts.append(warn_msg)
+        if rows_out:
+            parts.append("")
+            for city, content in rows_out[:PREVIEW_LINES]:
+                city_txt = (city or "").strip()
+                city_txt = city_txt if city_txt else "(no city)"
+                preview = (content or "").strip()
+                if len(preview) > 200:
+                    preview = preview[:200] + "..."
+                display = preview if preview else "(empty)"
+                parts.append(f"City: {city_txt}\nContent: {display}\n---")
+        return "\n".join(parts)
 
     def _prev_txt_csv(self):
         if not self.txt_path.get(): return "Choose a TXT file."
@@ -964,6 +1179,14 @@ class App(tk.Tk):
     @staticmethod
     def _guess_content_col(headers):
         candidates = ["text","prompt","content","query","question","input","user","instruction"]
+        low = {h.lower(): h for h in headers}
+        for c in candidates:
+            if c in low: return low[c]
+        return None
+
+    @staticmethod
+    def _guess_city_col(headers):
+        candidates = ["city", "location", "name", "town", "municipality"]
         low = {h.lower(): h for h in headers}
         for c in candidates:
             if c in low: return low[c]
