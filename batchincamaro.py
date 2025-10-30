@@ -303,7 +303,6 @@ class App(tk.Tk):
         self.content_col = tk.StringVar()
         self.id_col = tk.StringVar(value="<None>")
         self.prefix_id = tk.StringVar(value=DEFAULT_PREFIX)
-        self.city_col = tk.StringVar()
         # Finetune mappings
         self.assistant_col = tk.StringVar()
         self.instruct_in_col = tk.StringVar()
@@ -395,7 +394,6 @@ class App(tk.Tk):
         self.lbl_content = ttk.Label(self.fr_cols, text="Content column (user):"); self.cb_content = ttk.Combobox(self.fr_cols, textvariable=self.content_col)
         self.lbl_id = ttk.Label(self.fr_cols, text="ID column (<None> for prefix):"); self.cb_id = ttk.Combobox(self.fr_cols, textvariable=self.id_col)
         self.lbl_prefix = ttk.Label(self.fr_cols, text="If no ID, use prefix:"); self.ent_prefix = ttk.Entry(self.fr_cols, textvariable=self.prefix_id)
-        self.lbl_city = ttk.Label(self.fr_cols, text="City column:"); self.cb_city = ttk.Combobox(self.fr_cols, textvariable=self.city_col)
         self.lbl_asst = ttk.Label(self.fr_cols, text="Assistant column:"); self.cb_asst = ttk.Combobox(self.fr_cols, textvariable=self.assistant_col)
         self.lbl_in_instruct = ttk.Label(self.fr_cols, text="Input column:"); self.cb_in_instruct = ttk.Combobox(self.fr_cols, textvariable=self.instruct_in_col)
         self.lbl_out_instruct = ttk.Label(self.fr_cols, text="Output column:"); self.cb_out_instruct = ttk.Combobox(self.fr_cols, textvariable=self.instruct_out_col)
@@ -549,7 +547,6 @@ class App(tk.Tk):
 
         # Handle column mapping visibility
         for w in (self.lbl_content,self.cb_content,self.lbl_id,self.cb_id,self.lbl_prefix,self.ent_prefix,
-                  self.lbl_city,self.cb_city,
                   self.lbl_asst,self.cb_asst,self.lbl_in_instruct,self.cb_in_instruct,
                   self.lbl_out_instruct,self.cb_out_instruct,self.lbl_prompt_comp,self.cb_prompt_comp,
                   self.lbl_completion_comp,self.cb_completion_comp):
@@ -653,17 +650,12 @@ class App(tk.Tk):
 
         self.csv_path.set(path)
         vals = self.headers
-        for cb in (self.cb_content,self.cb_asst,self.cb_in_instruct,self.cb_out_instruct,self.cb_prompt_comp,self.cb_completion_comp,self.cb_city):
+        for cb in (self.cb_content,self.cb_asst,self.cb_in_instruct,self.cb_out_instruct,self.cb_prompt_comp,self.cb_completion_comp):
             cb.configure(values=vals)
         self.cb_id.configure(values=["<None>"]+vals)
         guess = self._guess_content_col(self.headers)
         self.content_col.set(guess if guess else (vals[0] if vals else ""))
         self.id_col.set("<None>")
-        city_guess = self._guess_city_col(self.headers)
-        if city_guess:
-            self.city_col.set(city_guess)
-        elif vals:
-            self.city_col.set(vals[0])
         self.status.set(f"Loaded {len(self.rows)} rows, {len(self.headers)} columns.")
         if not self.out_path.get():
             base = os.path.splitext(os.path.basename(path))[0]
@@ -1198,15 +1190,6 @@ class App(tk.Tk):
         low = {h.lower(): h for h in headers}
         for c in candidates:
             if c in low: return low[c]
-        return None
-
-    @staticmethod
-    def _guess_city_col(headers):
-        candidates = ["city", "location", "municipality", "town", "state", "name"]
-        low = {h.lower(): h for h in headers}
-        for c in candidates:
-            if c in low:
-                return low[c]
         return None
 
 if __name__ == "__main__":
