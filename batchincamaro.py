@@ -368,99 +368,99 @@ class App(tk.Tk):
         cb.bind("<<ComboboxSelected>>", self.on_mode_change)
 
         # Paths
-        fr_paths = ttk.LabelFrame(left, text="Paths"); fr_paths.pack(fill="x", padx=10, pady=8); fr_paths.columnconfigure(1, weight=1)
+        self.fr_paths = ttk.LabelFrame(left, text="Paths"); self.fr_paths.pack(fill="x", padx=10, pady=8); self.fr_paths.columnconfigure(1, weight=1)
         # CSV
-        self.lbl_in_csv = ttk.Label(fr_paths, text="Input CSV:")
-        self.ent_in_csv = ttk.Entry(fr_paths, textvariable=self.csv_path)
-        self.btn_in_csv = ttk.Button(fr_paths, text="Open…", command=self.menu_open_csv, width=12)
+        self.lbl_in_csv = ttk.Label(self.fr_paths, text="Input CSV:")
+        self.ent_in_csv = ttk.Entry(self.fr_paths, textvariable=self.csv_path)
+        self.btn_in_csv = ttk.Button(self.fr_paths, text="Open…", command=self.menu_open_csv, width=12)
         # JSONL
-        self.lbl_jsonl = ttk.Label(fr_paths, text="Batch output JSONL:")
-        self.ent_jsonl = ttk.Entry(fr_paths, textvariable=self.jsonl_path)
-        self.btn_jsonl = ttk.Button(fr_paths, text="Open…", command=self.menu_open_jsonl, width=12)
+        self.lbl_jsonl = ttk.Label(self.fr_paths, text="Batch output JSONL:")
+        self.ent_jsonl = ttk.Entry(self.fr_paths, textvariable=self.jsonl_path)
+        self.btn_jsonl = ttk.Button(self.fr_paths, text="Open…", command=self.menu_open_jsonl, width=12)
         # Docs
-        self.lbl_docs = ttk.Label(fr_paths, text="Docs folder:")
-        self.ent_docs = ttk.Entry(fr_paths, textvariable=self.docs_dir)
-        self.btn_docs = ttk.Button(fr_paths, text="Browse…", command=self.browse_docs, width=12)
+        self.lbl_docs = ttk.Label(self.fr_paths, text="Docs folder:")
+        self.ent_docs = ttk.Entry(self.fr_paths, textvariable=self.docs_dir)
+        self.btn_docs = ttk.Button(self.fr_paths, text="Browse…", command=self.browse_docs, width=12)
         # TXT
-        self.lbl_txt = ttk.Label(fr_paths, text="Input TXT:")
-        self.ent_txt = ttk.Entry(fr_paths, textvariable=self.txt_path)
-        self.btn_txt = ttk.Button(fr_paths, text="Open…", command=self.menu_open_txt, width=12)
+        self.lbl_txt = ttk.Label(self.fr_paths, text="Input TXT:")
+        self.ent_txt = ttk.Entry(self.fr_paths, textvariable=self.txt_path)
+        self.btn_txt = ttk.Button(self.fr_paths, text="Open…", command=self.menu_open_txt, width=12)
 
-        ttk.Label(fr_paths, text="Output file:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_paths, textvariable=self.out_path).grid(row=3, column=1, sticky="we", padx=6, pady=6)
-        ttk.Button(fr_paths, text="Save As…", command=self.menu_save_output, width=12).grid(row=3, column=2, padx=6, pady=6)
+        self.lbl_out = ttk.Label(self.fr_paths, text="Output file:")
+        self.ent_out = ttk.Entry(self.fr_paths, textvariable=self.out_path)
+        self.btn_out = ttk.Button(self.fr_paths, text="Save As…", command=self.menu_save_output, width=12)
 
         # Column mapping
-        fr_cols = ttk.LabelFrame(left, text="Column Mapping"); fr_cols.pack(fill="x", padx=10, pady=8); fr_cols.columnconfigure(1, weight=1)
-        self.lbl_content = ttk.Label(fr_cols, text="Content column (user):"); self.cb_content = ttk.Combobox(fr_cols, textvariable=self.content_col)
-        self.lbl_id = ttk.Label(fr_cols, text="ID column (<None> for prefix):"); self.cb_id = ttk.Combobox(fr_cols, textvariable=self.id_col)
-        self.lbl_prefix = ttk.Label(fr_cols, text="If no ID, use prefix:"); self.ent_prefix = ttk.Entry(fr_cols, textvariable=self.prefix_id)
-        self.lbl_city = ttk.Label(fr_cols, text="City column:"); self.cb_city = ttk.Combobox(fr_cols, textvariable=self.city_col)
-        self.lbl_asst = ttk.Label(fr_cols, text="Assistant column:"); self.cb_asst = ttk.Combobox(fr_cols, textvariable=self.assistant_col)
-        self.lbl_in_instruct = ttk.Label(fr_cols, text="Input column:"); self.cb_in_instruct = ttk.Combobox(fr_cols, textvariable=self.instruct_in_col)
-        self.lbl_out_instruct = ttk.Label(fr_cols, text="Output column:"); self.cb_out_instruct = ttk.Combobox(fr_cols, textvariable=self.instruct_out_col)
-        self.lbl_prompt_comp = ttk.Label(fr_cols, text="Prompt column:"); self.cb_prompt_comp = ttk.Combobox(fr_cols, textvariable=self.comp_prompt_col)
-        self.lbl_completion_comp = ttk.Label(fr_cols, text="Completion column:"); self.cb_completion_comp = ttk.Combobox(fr_cols, textvariable=self.comp_completion_col)
+        self.fr_cols = ttk.LabelFrame(left, text="Column Mapping"); self.fr_cols.pack(fill="x", padx=10, pady=8); self.fr_cols.columnconfigure(1, weight=1)
+        self.lbl_content = ttk.Label(self.fr_cols, text="Content column (user):"); self.cb_content = ttk.Combobox(self.fr_cols, textvariable=self.content_col)
+        self.lbl_id = ttk.Label(self.fr_cols, text="ID column (<None> for prefix):"); self.cb_id = ttk.Combobox(self.fr_cols, textvariable=self.id_col)
+        self.lbl_prefix = ttk.Label(self.fr_cols, text="If no ID, use prefix:"); self.ent_prefix = ttk.Entry(self.fr_cols, textvariable=self.prefix_id)
+        self.lbl_city = ttk.Label(self.fr_cols, text="City column:"); self.cb_city = ttk.Combobox(self.fr_cols, textvariable=self.city_col)
+        self.lbl_asst = ttk.Label(self.fr_cols, text="Assistant column:"); self.cb_asst = ttk.Combobox(self.fr_cols, textvariable=self.assistant_col)
+        self.lbl_in_instruct = ttk.Label(self.fr_cols, text="Input column:"); self.cb_in_instruct = ttk.Combobox(self.fr_cols, textvariable=self.instruct_in_col)
+        self.lbl_out_instruct = ttk.Label(self.fr_cols, text="Output column:"); self.cb_out_instruct = ttk.Combobox(self.fr_cols, textvariable=self.instruct_out_col)
+        self.lbl_prompt_comp = ttk.Label(self.fr_cols, text="Prompt column:"); self.cb_prompt_comp = ttk.Combobox(self.fr_cols, textvariable=self.comp_prompt_col)
+        self.lbl_completion_comp = ttk.Label(self.fr_cols, text="Completion column:"); self.cb_completion_comp = ttk.Combobox(self.fr_cols, textvariable=self.comp_completion_col)
 
         # Docs chunking
-        fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); fr_docs.pack(fill="x", padx=10, pady=8)
-        for i in (1,3,5): fr_docs.columnconfigure(i, weight=1)
-        ttk.Label(fr_docs, text="Target words:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_docs, textvariable=self.target_words, width=10).grid(row=0, column=1, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_docs, text="Sentence overlap:").grid(row=0, column=2, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_docs, textvariable=self.overlap_sents, width=10).grid(row=0, column=3, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_docs, text="Paragraph-only chunks", variable=self.para_only).grid(row=0, column=4, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_docs, text="Enable PDF OCR fallback", variable=self.ocr_enabled).grid(row=1, column=0, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_docs, text="OCR lang:").grid(row=1, column=1, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_docs, textvariable=self.ocr_lang, width=10).grid(row=1, column=2, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_docs, text="OCR DPI:").grid(row=1, column=3, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_docs, textvariable=self.ocr_dpi, width=10).grid(row=1, column=4, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_docs, text="Extra suffixes:").grid(row=1, column=5, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_docs, textvariable=self.suffix_extra).grid(row=1, column=6, sticky="we", padx=6, pady=6)
+        self.fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); self.fr_docs.pack(fill="x", padx=10, pady=8)
+        for i in (1,3,5): self.fr_docs.columnconfigure(i, weight=1)
+        ttk.Label(self.fr_docs, text="Target words:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_docs, textvariable=self.target_words, width=10).grid(row=0, column=1, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_docs, text="Sentence overlap:").grid(row=0, column=2, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_docs, textvariable=self.overlap_sents, width=10).grid(row=0, column=3, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(self.fr_docs, text="Paragraph-only chunks", variable=self.para_only).grid(row=0, column=4, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(self.fr_docs, text="Enable PDF OCR fallback", variable=self.ocr_enabled).grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_docs, text="OCR lang:").grid(row=1, column=1, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_docs, textvariable=self.ocr_lang, width=10).grid(row=1, column=2, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_docs, text="OCR DPI:").grid(row=1, column=3, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_docs, textvariable=self.ocr_dpi, width=10).grid(row=1, column=4, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_docs, text="Extra suffixes:").grid(row=1, column=5, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_docs, textvariable=self.suffix_extra).grid(row=1, column=6, sticky="we", padx=6, pady=6)
 
         # TXT → CSV settings
-        fr_txt = ttk.LabelFrame(left, text="TXT → CSV parsing")
-        fr_txt.pack(fill="x", padx=10, pady=8)
-        for i in (1,3,5): fr_txt.columnconfigure(i, weight=1)
+        self.fr_txt = ttk.LabelFrame(left, text="TXT → CSV parsing")
+        self.fr_txt.pack(fill="x", padx=10, pady=8)
+        for i in (1,3,5): self.fr_txt.columnconfigure(i, weight=1)
         
         # Row 0: Line filtering and heading detection
-        ttk.Label(fr_txt, text="Ignore lines shorter than:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.min_line_len, width=10).grid(row=0, column=1, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Min heading chars:").grid(row=0, column=2, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.min_heading_chars, width=10).grid(row=0, column=3, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Max heading chars:").grid(row=0, column=4, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.max_heading_chars, width=10).grid(row=0, column=5, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_txt, text="Ignore lines shorter than:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_txt, textvariable=self.min_line_len, width=10).grid(row=0, column=1, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_txt, text="Min heading chars:").grid(row=0, column=2, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_txt, textvariable=self.min_heading_chars, width=10).grid(row=0, column=3, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_txt, text="Max heading chars:").grid(row=0, column=4, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_txt, textvariable=self.max_heading_chars, width=10).grid(row=0, column=5, sticky="w", padx=6, pady=6)
         
         # Row 1: Detection options
-        ttk.Checkbutton(fr_txt, text="Detect ALL CAPS headings", variable=self.detect_all_caps).grid(row=1, column=0, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_txt, text="Detect Title Case headings", variable=self.detect_title_case).grid(row=1, column=1, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_txt, text="Detect numbered headings", variable=self.detect_numbered).grid(row=1, column=2, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_txt, text="Split on separator lines (====, ----, ***)", variable=self.split_on_separators).grid(row=1, column=3, columnspan=2, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Min separator len:").grid(row=1, column=5, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(self.fr_txt, text="Detect ALL CAPS headings", variable=self.detect_all_caps).grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(self.fr_txt, text="Detect Title Case headings", variable=self.detect_title_case).grid(row=1, column=1, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(self.fr_txt, text="Detect numbered headings", variable=self.detect_numbered).grid(row=1, column=2, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(self.fr_txt, text="Split on separator lines (====, ----, ***)", variable=self.split_on_separators).grid(row=1, column=3, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_txt, text="Min separator len:").grid(row=1, column=5, sticky="w", padx=6, pady=6)
         
         # Row 2: Section selection
-        ttk.Checkbutton(fr_txt, text="Parse specific line range", variable=self.use_line_range).grid(row=2, column=0, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Start line:").grid(row=2, column=1, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.start_line, width=10).grid(row=2, column=2, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="End line (-1=end):").grid(row=2, column=3, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.end_line, width=10).grid(row=2, column=4, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.min_separator_len, width=10).grid(row=2, column=5, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(self.fr_txt, text="Parse specific line range", variable=self.use_line_range).grid(row=2, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_txt, text="Start line:").grid(row=2, column=1, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_txt, textvariable=self.start_line, width=10).grid(row=2, column=2, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_txt, text="End line (-1=end):").grid(row=2, column=3, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_txt, textvariable=self.end_line, width=10).grid(row=2, column=4, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_txt, textvariable=self.min_separator_len, width=10).grid(row=2, column=5, sticky="w", padx=6, pady=6)
         
         # Row 3: CSV output delimiter
-        ttk.Label(fr_txt, text="CSV delimiter:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.csv_delimiter, width=10).grid(row=3, column=1, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_txt, text="CSV delimiter:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_txt, textvariable=self.csv_delimiter, width=10).grid(row=3, column=1, sticky="w", padx=6, pady=6)
         
         # Row 4: Header handling
-        ttk.Checkbutton(fr_txt, text="First row is header (skip it)", variable=self.has_header_row).grid(row=4, column=0, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Title header name:").grid(row=4, column=1, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.custom_title_header, width=12).grid(row=4, column=2, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Content header name:").grid(row=4, column=3, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.custom_content_header, width=12).grid(row=4, column=4, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(self.fr_txt, text="First row is header (skip it)", variable=self.has_header_row).grid(row=4, column=0, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_txt, text="Title header name:").grid(row=4, column=1, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_txt, textvariable=self.custom_title_header, width=12).grid(row=4, column=2, sticky="w", padx=6, pady=6)
+        ttk.Label(self.fr_txt, text="Content header name:").grid(row=4, column=3, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.fr_txt, textvariable=self.custom_content_header, width=12).grid(row=4, column=4, sticky="w", padx=6, pady=6)
 
         # Prompt
-        fr_prompt = ttk.LabelFrame(left, text="System Prompt (default per mode)")
-        fr_prompt.pack(fill="both", expand=True, padx=10, pady=8)
-        self.txt_prompt = tk.Text(fr_prompt, height=6, wrap="word")
+        self.fr_prompt = ttk.LabelFrame(left, text="System Prompt (default per mode)")
+        self.fr_prompt.pack(fill="both", expand=True, padx=10, pady=8)
+        self.txt_prompt = tk.Text(self.fr_prompt, height=6, wrap="word")
         self.txt_prompt.pack(fill="both", expand=True, padx=6, pady=6)
         self.txt_prompt.insert("1.0", self.system_prompt.get())
 
@@ -500,37 +500,54 @@ class App(tk.Tk):
         self.layout_for_mode(); self.refresh_preview()
 
     def layout_for_mode(self):
+        # First, unpack all input rows
         for w in (self.lbl_in_csv, self.ent_in_csv, self.btn_in_csv,
                   self.lbl_jsonl, self.ent_jsonl, self.btn_jsonl,
                   self.lbl_docs, self.ent_docs, self.btn_docs,
-                  self.lbl_txt, self.ent_txt, self.btn_txt):
+                  self.lbl_txt, self.ent_txt, self.btn_txt,
+                  self.lbl_out, self.ent_out, self.btn_out):
             try: w.grid_forget()
             except Exception: pass
 
         mode = self.mode.get()
+        row_num = 0
+        
+        # Configure input paths based on mode
         self.lbl_content.configure(text="Content column (user):")
         self.lbl_id.configure(text="ID column (<None> for prefix):")
         self.lbl_prefix.configure(text="If no ID, use prefix:")
+        
         if mode == "Docs → Batch Inference":
-            self.lbl_docs.grid(row=0, column=0, sticky="w", padx=6, pady=6)
-            self.ent_docs.grid(row=0, column=1, sticky="we", padx=6, pady=6)
-            self.btn_docs.grid(row=0, column=2, padx=6, pady=6)
+            self.lbl_docs.grid(row=row_num, column=0, sticky="w", padx=6, pady=6)
+            self.ent_docs.grid(row=row_num, column=1, sticky="we", padx=6, pady=6)
+            self.btn_docs.grid(row=row_num, column=2, padx=6, pady=6)
+            row_num += 1
         elif mode == "TXT → CSV (parse)":
-            self.lbl_txt.grid(row=0, column=0, sticky="w", padx=6, pady=6)
-            self.ent_txt.grid(row=0, column=1, sticky="we", padx=6, pady=6)
-            self.btn_txt.grid(row=0, column=2, padx=6, pady=6)
+            self.lbl_txt.grid(row=row_num, column=0, sticky="w", padx=6, pady=6)
+            self.ent_txt.grid(row=row_num, column=1, sticky="we", padx=6, pady=6)
+            self.btn_txt.grid(row=row_num, column=2, padx=6, pady=6)
+            row_num += 1
         elif mode == "de-jsonl":
-            self.lbl_jsonl.grid(row=0, column=0, sticky="w", padx=6, pady=6)
-            self.ent_jsonl.grid(row=0, column=1, sticky="we", padx=6, pady=6)
-            self.btn_jsonl.grid(row=0, column=2, padx=6, pady=6)
-            self.lbl_in_csv.grid(row=1, column=0, sticky="w", padx=6, pady=6)
-            self.ent_in_csv.grid(row=1, column=1, sticky="we", padx=6, pady=6)
-            self.btn_in_csv.grid(row=1, column=2, padx=6, pady=6)
+            self.lbl_jsonl.grid(row=row_num, column=0, sticky="w", padx=6, pady=6)
+            self.ent_jsonl.grid(row=row_num, column=1, sticky="we", padx=6, pady=6)
+            self.btn_jsonl.grid(row=row_num, column=2, padx=6, pady=6)
+            row_num += 1
+            self.lbl_in_csv.grid(row=row_num, column=0, sticky="w", padx=6, pady=6)
+            self.ent_in_csv.grid(row=row_num, column=1, sticky="we", padx=6, pady=6)
+            self.btn_in_csv.grid(row=row_num, column=2, padx=6, pady=6)
+            row_num += 1
         else:
-            self.lbl_in_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
-            self.ent_in_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
-            self.btn_in_csv.grid(row=0, column=2, padx=6, pady=6)
+            self.lbl_in_csv.grid(row=row_num, column=0, sticky="w", padx=6, pady=6)
+            self.ent_in_csv.grid(row=row_num, column=1, sticky="we", padx=6, pady=6)
+            self.btn_in_csv.grid(row=row_num, column=2, padx=6, pady=6)
+            row_num += 1
+        
+        # Always show output path
+        self.lbl_out.grid(row=row_num, column=0, sticky="w", padx=6, pady=6)
+        self.ent_out.grid(row=row_num, column=1, sticky="we", padx=6, pady=6)
+        self.btn_out.grid(row=row_num, column=2, padx=6, pady=6)
 
+        # Handle column mapping visibility
         for w in (self.lbl_content,self.cb_content,self.lbl_id,self.cb_id,self.lbl_prefix,self.ent_prefix,
                   self.lbl_city,self.cb_city,
                   self.lbl_asst,self.cb_asst,self.lbl_in_instruct,self.cb_in_instruct,
@@ -540,6 +557,8 @@ class App(tk.Tk):
             except Exception: pass
 
         r=0
+        show_column_mapping = True
+        
         if mode == "Batch Inference (CSV)":
             self.lbl_content.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_content.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_id.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_id.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
@@ -554,30 +573,38 @@ class App(tk.Tk):
             self.lbl_prompt_comp.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_prompt_comp.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_completion_comp.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_completion_comp.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
         elif mode == "de-jsonl":
-            self.lbl_city.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_city.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_content.configure(text="Content column to overwrite:")
             self.lbl_content.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_content.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_id.configure(text="ID column (optional, matches custom_id):")
             self.lbl_id.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_id.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_prefix.configure(text="Fallback prefix for custom_id:")
             self.lbl_prefix.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.ent_prefix.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
+        elif mode in ("Docs → Batch Inference", "TXT → CSV (parse)"):
+            show_column_mapping = False
+        
+        # Show/hide entire column mapping frame
+        if show_column_mapping:
+            self.fr_cols.pack(fill="x", padx=10, pady=8, before=self.fr_docs)
+        else:
+            self.fr_cols.pack_forget()
 
-        self._set_group_state("Docs Chunking", "normal" if mode=="Docs → Batch Inference" else "disabled")
-        self._set_group_state("TXT → CSV parsing", "normal" if mode=="TXT → CSV (parse)" else "disabled")
-
-    def _set_group_state(self, group_title: str, state: str):
-        for child in self._children_of_label_frame(group_title):
-            try: child.configure(state=state)
-            except Exception: pass
-
-    def _children_of_label_frame(self, title: str):
-        for child in self.winfo_children():
-            if isinstance(child, ttk.Panedwindow):
-                for sub in child.winfo_children():
-                    for lf in sub.winfo_children():
-                        if isinstance(lf, ttk.LabelFrame) and lf.cget("text")==title:
-                            return lf.winfo_children()
-        return []
+        # Show/hide Docs Chunking frame
+        if mode == "Docs → Batch Inference":
+            self.fr_docs.pack(fill="x", padx=10, pady=8, before=self.fr_txt)
+        else:
+            self.fr_docs.pack_forget()
+        
+        # Show/hide TXT parsing frame
+        if mode == "TXT → CSV (parse)":
+            self.fr_txt.pack(fill="x", padx=10, pady=8, before=self.fr_prompt)
+        else:
+            self.fr_txt.pack_forget()
+        
+        # Show/hide Prompt frame
+        if mode in ("de-jsonl", "TXT → CSV (parse)"):
+            self.fr_prompt.pack_forget()
+        else:
+            self.fr_prompt.pack(fill="both", expand=True, padx=10, pady=8)
 
     # ----- menu actions -----
     def menu_open_csv(self):
@@ -764,10 +791,7 @@ class App(tk.Tk):
         if not self.rows or not self.headers:
             raise ValueError("Load the original CSV first.")
 
-        city_col = self.city_col.get().strip()
         content_col = self.content_col.get().strip()
-        if not city_col or city_col not in self.headers:
-            raise ValueError(f"City column not found: {city_col or '(none)'}")
         if not content_col or content_col not in self.headers:
             raise ValueError(f"Content column not found: {content_col or '(none)'}")
 
@@ -778,8 +802,8 @@ class App(tk.Tk):
         update_count = 0
         total_rows = len(self.rows)
         with open(out_path, "w", encoding="utf-8", newline="") as fh:
-            writer = csv.writer(fh, quoting=csv.QUOTE_ALL)
-            writer.writerow([city_col, content_col])
+            writer = csv.DictWriter(fh, fieldnames=self.headers, quoting=csv.QUOTE_ALL)
+            writer.writeheader()
             for idx, row in enumerate(self.rows, start=1):
                 if use_id_col:
                     custom_id = str(row.get(id_choice, "")).strip()
@@ -787,20 +811,13 @@ class App(tk.Tk):
                     custom_id = f"{prefix}{idx}"
                 if not custom_id:
                     custom_id = f"{prefix}{idx}"
-                city_value = row.get(city_col, "")
-                if city_value is None:
-                    city_value = ""
-                if not isinstance(city_value, str):
-                    city_value = str(city_value)
-                content_value = row.get(content_col, "")
-                if content_value is None:
-                    content_value = ""
-                if not isinstance(content_value, str):
-                    content_value = str(content_value)
+                # Create a new row dict with all original columns
+                new_row = dict(row)
+                # Update the content column if we have a response
                 if custom_id in responses:
-                    content_value = responses[custom_id]
+                    new_row[content_col] = responses[custom_id]
                     update_count += 1
-                writer.writerow([city_value, content_value])
+                writer.writerow(new_row)
 
         size_bytes = Path(out_path).stat().st_size
         match_warning = None
@@ -934,7 +951,6 @@ class App(tk.Tk):
                 info += "\nSkipping first row as header"
             return info
         if mode == "de-jsonl":
-            city_col = self.city_col.get().strip() or "<city>"
             content_col = self.content_col.get().strip() or "<content>"
             id_choice = self.id_col.get().strip()
             if id_choice and id_choice != "<None>":
@@ -943,7 +959,8 @@ class App(tk.Tk):
                 match_info = f"Matching custom_id via prefix: {self.prefix_id.get().strip() or DEFAULT_PREFIX}"
             return (
                 "CSV output merging batch responses into original rows.\n"
-                f"Columns: {city_col}, {content_col}\n{match_info}"
+                f"All original columns will be preserved.\n"
+                f"Column to update: {content_col}\n{match_info}"
             )
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
@@ -1065,10 +1082,7 @@ class App(tk.Tk):
             return f"(JSONL error) {e}"
         if not self.rows or not self.headers:
             return "Load the original CSV to preview."
-        city_col = self.city_col.get().strip()
         content_col = self.content_col.get().strip()
-        if not city_col or city_col not in self.headers:
-            return f"City column not found: {city_col or '(none)'}"
         if not content_col or content_col not in self.headers:
             return f"Content column not found: {content_col or '(none)'}"
         id_choice = self.id_col.get().strip()
@@ -1081,15 +1095,21 @@ class App(tk.Tk):
                 custom_id = f"{prefix}{idx}"
             if custom_id not in responses:
                 continue
-            city_value = row.get(city_col, "")
-            if city_value is None:
-                city_value = ""
-            if not isinstance(city_value, str):
-                city_value = str(city_value)
-            content_value = responses[custom_id] or ""
-            if len(content_value) > 200:
-                content_value = content_value[:200] + "…"
-            out.append(f"{city_value}: {content_value}")
+            # Show all columns from the row
+            row_preview = []
+            for header in self.headers[:5]:  # Show first 5 columns
+                value = str(row.get(header, ""))
+                if header == content_col and custom_id in responses:
+                    # Show updated content (truncated)
+                    updated_value = responses[custom_id] or ""
+                    if len(updated_value) > 100:
+                        updated_value = updated_value[:100] + "…"
+                    row_preview.append(f"{header}: {updated_value} [UPDATED]")
+                else:
+                    if len(value) > 50:
+                        value = value[:50] + "…"
+                    row_preview.append(f"{header}: {value}")
+            out.append(" | ".join(row_preview))
             if len(out) >= PREVIEW_LINES:
                 break
         if not out:
