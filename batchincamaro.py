@@ -473,14 +473,32 @@ class App(tk.Tk):
         # JSONL → CSV field selection
         fr_jsonl = ttk.LabelFrame(left, text="JSONL → CSV: Field Selection")
         fr_jsonl.pack(fill="both", expand=False, padx=10, pady=8)
-        self.jsonl_fields_frame = ttk.Frame(fr_jsonl)
-        self.jsonl_fields_frame.pack(fill="both", expand=True, padx=6, pady=6)
-        self.jsonl_select_all_btn = ttk.Button(fr_jsonl, text="Select All", command=self.select_all_jsonl_fields)
-        self.jsonl_select_all_btn.pack(side="left", padx=6, pady=6)
-        self.jsonl_deselect_all_btn = ttk.Button(fr_jsonl, text="Deselect All", command=self.deselect_all_jsonl_fields)
-        self.jsonl_deselect_all_btn.pack(side="left", padx=6, pady=6)
-        self.jsonl_info_label = ttk.Label(fr_jsonl, text="Open a JSONL file to see available fields")
-        self.jsonl_info_label.pack(side="left", padx=6, pady=6)
+        
+        # Buttons at the top
+        btn_frame = ttk.Frame(fr_jsonl)
+        btn_frame.pack(fill="x", padx=6, pady=6)
+        self.jsonl_select_all_btn = ttk.Button(btn_frame, text="Select All", command=self.select_all_jsonl_fields)
+        self.jsonl_select_all_btn.pack(side="left", padx=(0, 6))
+        self.jsonl_deselect_all_btn = ttk.Button(btn_frame, text="Deselect All", command=self.deselect_all_jsonl_fields)
+        self.jsonl_deselect_all_btn.pack(side="left", padx=(0, 6))
+        self.jsonl_info_label = ttk.Label(btn_frame, text="Open a JSONL file to see available fields")
+        self.jsonl_info_label.pack(side="left", padx=6)
+        
+        # Scrollable frame for checkboxes
+        canvas = tk.Canvas(fr_jsonl, height=150)
+        scrollbar = ttk.Scrollbar(fr_jsonl, orient="vertical", command=canvas.yview)
+        self.jsonl_fields_frame = ttk.Frame(canvas)
+        
+        self.jsonl_fields_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=self.jsonl_fields_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=6)
+        scrollbar.pack(side="right", fill="y", pady=6, padx=(0, 6))
 
         # Prompt
         fr_prompt = ttk.LabelFrame(left, text="System Prompt (default per mode)")
@@ -733,7 +751,13 @@ class App(tk.Tk):
         for record in records:
             traverse(record)
         
-        return sorted(fields)
+        # Sort fields with better ordering: top-level first, then nested
+        def sort_key(field):
+            depth = field.count('.')
+            has_index = '[' in field
+            return (depth, has_index, field)
+        
+        return sorted(fields, key=sort_key)
 
     def select_all_jsonl_fields(self):
         """Select all JSONL fields"""
