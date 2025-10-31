@@ -41,6 +41,8 @@ APP_TITLE = "🏎️ Batchin' Camaro"
 PREVIEW_LINES = 20
 DEFAULT_PREFIX = "request-"
 MAX_ARRAY_ITEMS_TO_CHECK = 3  # Number of array items to check during field discovery
+JSONL_MAX_DISCOVERY_DEPTH = 8  # Depth limit when discovering nested JSONL fields
+JSONL_PARSE_WARNING_LIMIT = 50  # Max number of parse warnings shown when reading JSONL
 
 MODES = [
     "Batch Inference (CSV)",
@@ -721,56 +723,84 @@ class App(tk.Tk):
     def _read_jsonl_records(self, path, max_records=None):
         """Read JSONL records from file, optionally limiting the number of records"""
         records = []
+        warn_count = 0
         with open(path, "r", encoding="utf-8") as f:
             for line_num, line in enumerate(f, 1):
                 line = line.strip()
                 if not line: continue
                 try:
-                    records.append(json.loads(line))
-                    if max_records and len(records) >= max_records:
-                        break
+                    obj = json.loads(line)
                 except json.JSONDecodeError as e:
-                    if line_num <= 100:  # Only warn for first 100 lines to avoid spam
-                        messagebox.showwarning("Parse Warning", f"Line {line_num} is not valid JSON: {e}")
+                    if warn_count < JSONL_PARSE_WARNING_LIMIT:
+                        messagebox.showwarning(
+                            "Parse Warning",
+                            f"Line {line_num} is not valid JSON: {e}"
+                        )
+                        warn_count += 1
                     continue
+                except Exception as e:  # pragma: no cover - defensive guard
+                    if warn_count < JSONL_PARSE_WARNING_LIMIT:
+                        messagebox.showwarning(
+                            "Parse Warning",
+                            f"Line {line_num} raised {type(e).__name__}: {e}"
+                        )
+                        warn_count += 1
+                    continue
+
+                records.append(obj)
+                if max_records and len(records) >= max_records:
+                    break
         return records
 
-    def _discover_jsonl_fields(self, records, max_depth=5):
+    def _iter_jsonl_paths(self, obj, *, path="", depth=0, max_depth=JSONL_MAX_DISCOVERY_DEPTH):
+        """Yield (path, value) pairs for scalar values within a JSON object."""
+        if depth > max_depth:
+            if path:
+                yield path, obj
+            return
+
+        if isinstance(obj, dict):
+            if not obj and path:
+                yield path, obj
+            for key, value in obj.items():
+                new_path = f"{path}.{key}" if path else key
+                if isinstance(value, (dict, list)):
+                    yield from self._iter_jsonl_paths(value, path=new_path, depth=depth + 1, max_depth=max_depth)
+                else:
+                    yield new_path, value
+        elif isinstance(obj, list):
+            if not obj and path:
+                yield path, obj
+            emitted_simple = False
+            for idx, item in enumerate(obj[:MAX_ARRAY_ITEMS_TO_CHECK]):
+                new_path = f"{path}[{idx}]" if path else f"[{idx}]"
+                if isinstance(item, (dict, list)):
+                    yield from self._iter_jsonl_paths(item, path=new_path, depth=depth + 1, max_depth=max_depth)
+                else:
+                    emitted_simple = True
+                    yield new_path, item
+            if path and not emitted_simple:
+                # Allow selecting the entire list when it only contains nested objects
+                yield path, obj
+        else:
+            if path:
+                yield path, obj
+
+    def _discover_jsonl_fields(self, records, max_depth=JSONL_MAX_DISCOVERY_DEPTH):
         """Discover all unique field paths in JSONL records"""
         fields = set()
-        
-        def traverse(obj, path="", depth=0):
-            if depth > max_depth:
-                return
-            
-            if isinstance(obj, dict):
-                for key, value in obj.items():
-                    new_path = f"{path}.{key}" if path else key
-                    
-                    if isinstance(value, (dict, list)):
-                        traverse(value, new_path, depth + 1)
-                    else:
-                        fields.add(new_path)
-            elif isinstance(obj, list):
-                # For lists, check the first few items to discover fields
-                for i, item in enumerate(obj[:MAX_ARRAY_ITEMS_TO_CHECK]):
-                    if isinstance(item, dict):
-                        # For message arrays, include role-specific paths
-                        traverse(item, f"{path}[{i}]", depth + 1)
-                    elif not isinstance(item, list):
-                        # For simple lists, just note the array itself
-                        fields.add(path)
-                        break
-        
+
         for record in records:
-            traverse(record)
-        
+            for field_path, _ in self._iter_jsonl_paths(record, max_depth=max_depth):
+                if field_path:
+                    fields.add(field_path)
+
         # Sort fields with better ordering: top-level first, then nested
         def sort_key(field):
             depth = field.count('.')
             has_index = '[' in field
             return (depth, has_index, field)
-        
+
         return sorted(fields, key=sort_key)
 
     def select_all_jsonl_fields(self):
@@ -993,30 +1023,33 @@ class App(tk.Tk):
         for part in parts:
             if current is None:
                 return ""
-            
+
             # Handle array indexing like "messages[0]"
             if "[" in part and "]" in part:
                 try:
-                    key = part[:part.index("[")]
-                    index_str = part[part.index("[")+1:part.index("]")]
+                    bracket_index = part.index("[")
+                    key = part[:bracket_index]
+                    index_str = part[bracket_index + 1: part.index("]", bracket_index)]
                     index = int(index_str)
-                    
+                except (ValueError, IndexError):
+                    return ""
+
+                if key:
                     if isinstance(current, dict) and key in current:
-                        current = current[key]
-                        if isinstance(current, list) and 0 <= index < len(current):
-                            current = current[index]
-                        else:
-                            return ""
+                        container = current[key]
                     else:
                         return ""
-                except (ValueError, IndexError, KeyError):
+                else:
+                    container = current
+
+                if not isinstance(container, list) or not (0 <= index < len(container)):
                     return ""
+                current = container[index]
             else:
                 if isinstance(current, dict):
                     current = current.get(part)
                 else:
                     return ""
-        
         # Convert to string representation
         if current is None:
             return ""
