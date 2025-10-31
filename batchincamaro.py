@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-# Dataset JSONL Builder + TXT → CSV parser
-# Adds:
+# Dataset JSONL Builder + TXT → CSV parser + JSONL → CSV converter
+# Features:
+# - Batch Inference (CSV → JSONL): Convert CSV to JSONL for batch API calls
+# - Finetune modes: Chat, Instruct, Completions (CSV → JSONL)
+# - Docs → Batch Inference: Convert documents to JSONL with chunking
+# - TXT → CSV: Parse structured text files to CSV with heading detection
+# - JSONL → CSV: De-JSONL mode to convert JSONL back to CSV with field selection
 # - Separator-line detection for TXT parsing (====, ----, ****, etc.)
 # - "Run" button (same as Build Output)
 
@@ -35,6 +40,7 @@ except Exception:
 APP_TITLE = "🏎️ Batchin' Camaro"
 PREVIEW_LINES = 20
 DEFAULT_PREFIX = "request-"
+MAX_ARRAY_ITEMS_TO_CHECK = 3  # Number of array items to check during field discovery
 
 MODES = [
     "Batch Inference (CSV)",
@@ -676,16 +682,7 @@ class App(tk.Tk):
     def load_jsonl(self, path):
         """Load JSONL file and discover available fields"""
         try:
-            records = []
-            with open(path, "r", encoding="utf-8") as f:
-                for line_num, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line: continue
-                    try:
-                        records.append(json.loads(line))
-                    except json.JSONDecodeError as e:
-                        messagebox.showwarning("Parse Warning", f"Line {line_num} is not valid JSON: {e}")
-                        continue
+            records = self._read_jsonl_records(path)
             
             if not records:
                 raise ValueError("No valid JSON records found.")
@@ -721,6 +718,23 @@ class App(tk.Tk):
             self.jsonl_info_label.configure(text="Open a JSONL file to see available fields")
             self.status.set("JSONL load failed.")
 
+    def _read_jsonl_records(self, path, max_records=None):
+        """Read JSONL records from file, optionally limiting the number of records"""
+        records = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line: continue
+                try:
+                    records.append(json.loads(line))
+                    if max_records and len(records) >= max_records:
+                        break
+                except json.JSONDecodeError as e:
+                    if line_num <= 100:  # Only warn for first 100 lines to avoid spam
+                        messagebox.showwarning("Parse Warning", f"Line {line_num} is not valid JSON: {e}")
+                    continue
+        return records
+
     def _discover_jsonl_fields(self, records, max_depth=5):
         """Discover all unique field paths in JSONL records"""
         fields = set()
@@ -739,7 +753,7 @@ class App(tk.Tk):
                         fields.add(new_path)
             elif isinstance(obj, list):
                 # For lists, check the first few items to discover fields
-                for i, item in enumerate(obj[:3]):  # Check first 3 items
+                for i, item in enumerate(obj[:MAX_ARRAY_ITEMS_TO_CHECK]):
                     if isinstance(item, dict):
                         # For message arrays, include role-specific paths
                         traverse(item, f"{path}[{i}]", depth + 1)
@@ -946,15 +960,7 @@ class App(tk.Tk):
             raise ValueError("Select at least one field to export.")
         
         # Read JSONL records
-        records = []
-        with open(jsonl_file, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+        records = self._read_jsonl_records(jsonl_file)
         
         if not records:
             raise ValueError("No valid records in JSONL file.")
@@ -990,10 +996,11 @@ class App(tk.Tk):
             
             # Handle array indexing like "messages[0]"
             if "[" in part and "]" in part:
-                key = part[:part.index("[")]
-                index_str = part[part.index("[")+1:part.index("]")]
                 try:
+                    key = part[:part.index("[")]
+                    index_str = part[part.index("[")+1:part.index("]")]
                     index = int(index_str)
+                    
                     if isinstance(current, dict) and key in current:
                         current = current[key]
                         if isinstance(current, list) and 0 <= index < len(current):
@@ -1214,18 +1221,8 @@ class App(tk.Tk):
             return "Select at least one field to export."
         
         try:
-            # Read first few records
-            records = []
-            with open(jsonl_file, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line: continue
-                    try:
-                        records.append(json.loads(line))
-                        if len(records) >= PREVIEW_LINES:
-                            break
-                    except json.JSONDecodeError:
-                        continue
+            # Read first few records for preview
+            records = self._read_jsonl_records(jsonl_file, max_records=PREVIEW_LINES)
             
             if not records:
                 return "No valid records in JSONL file."
