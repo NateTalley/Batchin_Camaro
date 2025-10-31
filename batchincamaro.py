@@ -43,6 +43,7 @@ MODES = [
     "Finetune: Completions",
     "Docs → Batch Inference",
     "TXT → CSV (parse)",
+    "JSONL → CSV (de-JSONL)",
 ]
 
 DEFAULT_PROMPTS = {
@@ -344,11 +345,17 @@ class App(tk.Tk):
         self.custom_title_header = tk.StringVar(value="title")
         self.custom_content_header = tk.StringVar(value="content")
 
+        # JSONL → CSV de-JSONL config
+        self.jsonl_path = tk.StringVar()
+        self.jsonl_fields = {}  # Will store BooleanVar for each discovered field
+        self.jsonl_available_fields = []  # List of all available field paths
+
         # Menu
         mbar = tk.Menu(self)
         filem = tk.Menu(mbar, tearoff=0)
         filem.add_command(label="Open CSV…", command=self.menu_open_csv)
         filem.add_command(label="Open TXT…", command=self.menu_open_txt)
+        filem.add_command(label="Open JSONL…", command=self.menu_open_jsonl)
         filem.add_command(label="Save Output As…", command=self.menu_save_output)
         filem.add_separator()
         filem.add_command(label="Exit", command=self.destroy)
@@ -381,6 +388,10 @@ class App(tk.Tk):
         self.lbl_txt = ttk.Label(fr_paths, text="Input TXT:")
         self.ent_txt = ttk.Entry(fr_paths, textvariable=self.txt_path)
         self.btn_txt = ttk.Button(fr_paths, text="Open…", command=self.menu_open_txt, width=12)
+        # JSONL
+        self.lbl_jsonl = ttk.Label(fr_paths, text="Input JSONL:")
+        self.ent_jsonl = ttk.Entry(fr_paths, textvariable=self.jsonl_path)
+        self.btn_jsonl = ttk.Button(fr_paths, text="Open…", command=self.menu_open_jsonl, width=12)
 
         ttk.Label(fr_paths, text="Output file:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_paths, textvariable=self.out_path).grid(row=3, column=1, sticky="we", padx=6, pady=6)
@@ -459,6 +470,18 @@ class App(tk.Tk):
         ttk.Label(fr_txt, text="Content header name:").grid(row=4, column=3, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_txt, textvariable=self.custom_content_header, width=12).grid(row=4, column=4, sticky="w", padx=6, pady=6)
 
+        # JSONL → CSV field selection
+        fr_jsonl = ttk.LabelFrame(left, text="JSONL → CSV: Field Selection")
+        fr_jsonl.pack(fill="both", expand=False, padx=10, pady=8)
+        self.jsonl_fields_frame = ttk.Frame(fr_jsonl)
+        self.jsonl_fields_frame.pack(fill="both", expand=True, padx=6, pady=6)
+        self.jsonl_select_all_btn = ttk.Button(fr_jsonl, text="Select All", command=self.select_all_jsonl_fields)
+        self.jsonl_select_all_btn.pack(side="left", padx=6, pady=6)
+        self.jsonl_deselect_all_btn = ttk.Button(fr_jsonl, text="Deselect All", command=self.deselect_all_jsonl_fields)
+        self.jsonl_deselect_all_btn.pack(side="left", padx=6, pady=6)
+        self.jsonl_info_label = ttk.Label(fr_jsonl, text="Open a JSONL file to see available fields")
+        self.jsonl_info_label.pack(side="left", padx=6, pady=6)
+
         # Prompt
         fr_prompt = ttk.LabelFrame(left, text="System Prompt (default per mode)")
         fr_prompt.pack(fill="both", expand=True, padx=10, pady=8)
@@ -508,7 +531,8 @@ class App(tk.Tk):
     def layout_for_mode(self):
         for w in (self.lbl_in_csv, self.ent_in_csv, self.btn_in_csv,
                   self.lbl_docs, self.ent_docs, self.btn_docs,
-                  self.lbl_txt, self.ent_txt, self.btn_txt):
+                  self.lbl_txt, self.ent_txt, self.btn_txt,
+                  self.lbl_jsonl, self.ent_jsonl, self.btn_jsonl):
             try: w.grid_forget()
             except Exception: pass
 
@@ -521,6 +545,10 @@ class App(tk.Tk):
             self.lbl_txt.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_txt.grid(row=0, column=1, sticky="we", padx=6, pady=6)
             self.btn_txt.grid(row=0, column=2, padx=6, pady=6)
+        elif mode == "JSONL → CSV (de-JSONL)":
+            self.lbl_jsonl.grid(row=0, column=0, sticky="w", padx=6, pady=6)
+            self.ent_jsonl.grid(row=0, column=1, sticky="we", padx=6, pady=6)
+            self.btn_jsonl.grid(row=0, column=2, padx=6, pady=6)
         else:
             self.lbl_in_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_in_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
@@ -554,6 +582,7 @@ class App(tk.Tk):
 
         self._set_group_state("Docs Chunking", "normal" if mode=="Docs → Batch Inference" else "disabled")
         self._set_group_state("TXT → CSV parsing", "normal" if mode=="TXT → CSV (parse)" else "disabled")
+        self._set_group_state("JSONL → CSV: Field Selection", "normal" if mode=="JSONL → CSV (de-JSONL)" else "disabled")
 
     def _set_group_state(self, group_title: str, state: str):
         for child in self._children_of_label_frame(group_title):
@@ -580,9 +609,14 @@ class App(tk.Tk):
         if not path: return
         self.txt_path.set(path); self.refresh_preview()
 
+    def menu_open_jsonl(self):
+        path = filedialog.askopenfilename(title="Select JSONL", filetypes=[("JSON Lines","*.jsonl"),("All files","*.*")])
+        if not path: return
+        self.load_jsonl(path); self.refresh_preview()
+
     def menu_save_output(self):
         mode = self.mode.get()
-        if mode == "TXT → CSV (parse)":
+        if mode in ("TXT → CSV (parse)", "JSONL → CSV (de-JSONL)"):
             ftypes = [("CSV files","*.csv"),("All files","*.*")]
             dflt = ".csv"
         else:
@@ -621,22 +655,118 @@ class App(tk.Tk):
         if not self.out_path.get() and self.mode.get()!="TXT → CSV (parse)":
             base = os.path.splitext(os.path.basename(path))[0]; self.out_path.set(f"{base}_batch.jsonl")
 
+    def load_jsonl(self, path):
+        """Load JSONL file and discover available fields"""
+        try:
+            records = []
+            with open(path, "r", encoding="utf-8") as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if not line: continue
+                    try:
+                        records.append(json.loads(line))
+                    except json.JSONDecodeError as e:
+                        messagebox.showwarning("Parse Warning", f"Line {line_num} is not valid JSON: {e}")
+                        continue
+            
+            if not records:
+                raise ValueError("No valid JSON records found.")
+            
+            # Discover all unique field paths
+            self.jsonl_available_fields = self._discover_jsonl_fields(records)
+            
+            # Clear existing checkboxes
+            for widget in self.jsonl_fields_frame.winfo_children():
+                widget.destroy()
+            
+            # Create new checkboxes for each field
+            self.jsonl_fields = {}
+            for i, field_path in enumerate(self.jsonl_available_fields):
+                var = tk.BooleanVar(value=True)  # Default to selected
+                self.jsonl_fields[field_path] = var
+                chk = ttk.Checkbutton(self.jsonl_fields_frame, text=field_path, variable=var, 
+                                      command=self.refresh_preview)
+                chk.grid(row=i, column=0, sticky="w", padx=6, pady=2)
+            
+            self.jsonl_path.set(path)
+            self.jsonl_info_label.configure(text=f"{len(records)} records, {len(self.jsonl_available_fields)} fields")
+            self.status.set(f"Loaded {len(records)} JSONL records.")
+            
+            if not self.out_path.get():
+                base = os.path.splitext(os.path.basename(path))[0]
+                self.out_path.set(f"{base}_export.csv")
+                
+        except Exception as e:
+            messagebox.showerror("JSONL Error", f"Failed to read JSONL:\n{e}")
+            self.jsonl_available_fields = []
+            self.jsonl_fields = {}
+            self.jsonl_info_label.configure(text="Open a JSONL file to see available fields")
+            self.status.set("JSONL load failed.")
+
+    def _discover_jsonl_fields(self, records, max_depth=5):
+        """Discover all unique field paths in JSONL records"""
+        fields = set()
+        
+        def traverse(obj, path="", depth=0):
+            if depth > max_depth:
+                return
+            
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    new_path = f"{path}.{key}" if path else key
+                    
+                    if isinstance(value, (dict, list)):
+                        traverse(value, new_path, depth + 1)
+                    else:
+                        fields.add(new_path)
+            elif isinstance(obj, list):
+                # For lists, check the first few items to discover fields
+                for i, item in enumerate(obj[:3]):  # Check first 3 items
+                    if isinstance(item, dict):
+                        # For message arrays, include role-specific paths
+                        traverse(item, f"{path}[{i}]", depth + 1)
+                    elif not isinstance(item, list):
+                        # For simple lists, just note the array itself
+                        fields.add(path)
+                        break
+        
+        for record in records:
+            traverse(record)
+        
+        return sorted(fields)
+
+    def select_all_jsonl_fields(self):
+        """Select all JSONL fields"""
+        for var in self.jsonl_fields.values():
+            var.set(True)
+        self.refresh_preview()
+
+    def deselect_all_jsonl_fields(self):
+        """Deselect all JSONL fields"""
+        for var in self.jsonl_fields.values():
+            var.set(False)
+        self.refresh_preview()
+
     # ----- build -----
     def build_output(self):
         mode = self.mode.get()
         out_path = self._ensure_out_path()
         if not out_path: return
         try:
-            if mode == "TXT → CSV (parse)":
-                recs = self._parse_txt_records()
-                delimiter = self.csv_delimiter.get() or ","
-                title_header = self.custom_title_header.get() or "title"
-                content_header = self.custom_content_header.get() or "content"
-                with open(out_path, "w", encoding="utf-8", newline="") as fh:
-                    w = csv.writer(fh, delimiter=delimiter)
-                    w.writerow([title_header, content_header])
-                    for r in recs: w.writerow([r["title"], r["content"]])
-                count = len(recs); size = Path(out_path).stat().st_size
+            if mode in ("TXT → CSV (parse)", "JSONL → CSV (de-JSONL)"):
+                if mode == "TXT → CSV (parse)":
+                    recs = self._parse_txt_records()
+                    delimiter = self.csv_delimiter.get() or ","
+                    title_header = self.custom_title_header.get() or "title"
+                    content_header = self.custom_content_header.get() or "content"
+                    with open(out_path, "w", encoding="utf-8", newline="") as fh:
+                        w = csv.writer(fh, delimiter=delimiter)
+                        w.writerow([title_header, content_header])
+                        for r in recs: w.writerow([r["title"], r["content"]])
+                    count = len(recs)
+                else:  # JSONL → CSV (de-JSONL)
+                    count = self._build_jsonl_to_csv(out_path)
+                size = Path(out_path).stat().st_size
             else:
                 with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
                     if mode == "Batch Inference (CSV)":
@@ -670,7 +800,7 @@ class App(tk.Tk):
             self.menu_save_output(); out_path = self.out_path.get().strip()
             if not out_path: return None
         if Path(out_path).suffix == "":
-            if self.mode.get()=="TXT → CSV (parse)":
+            if self.mode.get() in ("TXT → CSV (parse)", "JSONL → CSV (de-JSONL)"):
                 out_path += ".csv"
             else:
                 out_path += ".jsonl"
@@ -780,6 +910,90 @@ class App(tk.Tk):
         if written==0: raise ValueError("No chunks produced from documents.")
         return written, size_bytes
 
+    def _build_jsonl_to_csv(self, out_path):
+        """Convert JSONL to CSV with selected fields"""
+        jsonl_file = self.jsonl_path.get().strip()
+        if not jsonl_file:
+            raise ValueError("Select a JSONL file first.")
+        
+        # Get selected fields
+        selected_fields = [field for field, var in self.jsonl_fields.items() if var.get()]
+        if not selected_fields:
+            raise ValueError("Select at least one field to export.")
+        
+        # Read JSONL records
+        records = []
+        with open(jsonl_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        
+        if not records:
+            raise ValueError("No valid records in JSONL file.")
+        
+        # Extract field values for each record
+        rows = []
+        for record in records:
+            row = {}
+            for field_path in selected_fields:
+                value = self._extract_field_value(record, field_path)
+                row[field_path] = value
+            rows.append(row)
+        
+        # Write CSV
+        with open(out_path, "w", encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=selected_fields)
+            writer.writeheader()
+            writer.writerows(rows)
+        
+        return len(rows)
+
+    def _extract_field_value(self, obj, path):
+        """Extract value from nested object using dot notation path"""
+        if not path:
+            return ""
+        
+        parts = path.split(".")
+        current = obj
+        
+        for part in parts:
+            if current is None:
+                return ""
+            
+            # Handle array indexing like "messages[0]"
+            if "[" in part and "]" in part:
+                key = part[:part.index("[")]
+                index_str = part[part.index("[")+1:part.index("]")]
+                try:
+                    index = int(index_str)
+                    if isinstance(current, dict) and key in current:
+                        current = current[key]
+                        if isinstance(current, list) and 0 <= index < len(current):
+                            current = current[index]
+                        else:
+                            return ""
+                    else:
+                        return ""
+                except (ValueError, IndexError, KeyError):
+                    return ""
+            else:
+                if isinstance(current, dict):
+                    current = current.get(part)
+                else:
+                    return ""
+        
+        # Convert to string representation
+        if current is None:
+            return ""
+        elif isinstance(current, (dict, list)):
+            return json.dumps(current, ensure_ascii=False)
+        else:
+            return str(current)
+
     # ----- preview -----
     def refresh_preview(self):
         prefix = self._make_common_prefix_preview()
@@ -801,6 +1015,13 @@ class App(tk.Tk):
             if self.has_header_row.get():
                 info += "\nSkipping first row as header"
             return info
+        if mode == "JSONL → CSV (de-JSONL)":
+            selected_fields = [field for field, var in self.jsonl_fields.items() if var.get()]
+            if selected_fields:
+                fields_str = "\n  ".join(selected_fields)
+                return f"CSV Export - Selected Fields:\n  {fields_str}"
+            else:
+                return "CSV Export - No fields selected"
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
             if mode == "Batch Inference (CSV)" and self.include_params.get():
@@ -844,6 +1065,8 @@ class App(tk.Tk):
                 return self._prev_ft_compl()
             if mode == "Docs → Batch Inference":
                 return self._prev_docs_batch()
+            if mode == "JSONL → CSV (de-JSONL)":
+                return self._prev_jsonl_to_csv()
             return self._prev_txt_csv()
         except Exception as e:
             return f"(preview error) {e}"
@@ -955,6 +1178,49 @@ class App(tk.Tk):
             return "\n".join(out) if len(out) > 1 else out[0] + "(no records)"
         except Exception as e:
             return f"(parse error) {e}"
+
+    def _prev_jsonl_to_csv(self):
+        """Preview JSONL to CSV conversion"""
+        jsonl_file = self.jsonl_path.get().strip()
+        if not jsonl_file:
+            return "Choose a JSONL file."
+        
+        selected_fields = [field for field, var in self.jsonl_fields.items() if var.get()]
+        if not selected_fields:
+            return "Select at least one field to export."
+        
+        try:
+            # Read first few records
+            records = []
+            with open(jsonl_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line: continue
+                    try:
+                        records.append(json.loads(line))
+                        if len(records) >= PREVIEW_LINES:
+                            break
+                    except json.JSONDecodeError:
+                        continue
+            
+            if not records:
+                return "No valid records in JSONL file."
+            
+            # Build preview
+            out = []
+            for i, record in enumerate(records, 1):
+                out.append(f"Record {i}:")
+                for field_path in selected_fields:
+                    value = self._extract_field_value(record, field_path)
+                    # Truncate long values
+                    if len(str(value)) > 100:
+                        value = str(value)[:100] + "..."
+                    out.append(f"  {field_path}: {value}")
+                out.append("---")
+            
+            return "\n".join(out)
+        except Exception as e:
+            return f"(preview error) {e}"
 
     # ----- helpers -----
     def _parse_txt_records(self):
