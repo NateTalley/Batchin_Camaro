@@ -392,7 +392,7 @@ class App(tk.Tk):
         self.lbl_id = ttk.Label(fr_cols, text="ID column (<None> for prefix):"); self.cb_id = ttk.Combobox(fr_cols, textvariable=self.id_col)
         self.lbl_prefix = ttk.Label(fr_cols, text="If no ID, use prefix:"); self.ent_prefix = ttk.Entry(fr_cols, textvariable=self.prefix_id)
         # Batch inference parameters
-        self.chk_params = ttk.Checkbutton(fr_cols, text="Include max_tokens & temperature", variable=self.include_params)
+        self.chk_params = ttk.Checkbutton(fr_cols, text="Include max_tokens & temperature", variable=self.include_params, command=self.refresh_preview)
         self.lbl_max_tokens = ttk.Label(fr_cols, text="Max tokens:")
         self.ent_max_tokens = ttk.Entry(fr_cols, textvariable=self.max_tokens, width=10)
         self.lbl_temperature = ttk.Label(fr_cols, text="Temperature:")
@@ -488,6 +488,10 @@ class App(tk.Tk):
         yscroll = ttk.Scrollbar(pr, orient="vertical", command=self.preview_box.yview); yscroll.grid(row=2, column=1, sticky="ns")
         xscroll = ttk.Scrollbar(pr, orient="horizontal", command=self.preview_box.xview); xscroll.grid(row=3, column=0, sticky="ew", padx=6)
         self.preview_box.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+
+        # Add traces to update preview when parameters change
+        self.max_tokens.trace_add("write", lambda *args: self.refresh_preview())
+        self.temperature.trace_add("write", lambda *args: self.refresh_preview())
 
         self.layout_for_mode()
         try:
