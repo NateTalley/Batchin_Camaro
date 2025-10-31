@@ -306,6 +306,11 @@ class App(tk.Tk):
         self.instruct_out_col = tk.StringVar()
         self.comp_prompt_col = tk.StringVar()
         self.comp_completion_col = tk.StringVar()
+        
+        # Batch inference parameters
+        self.include_params = tk.BooleanVar(value=False)
+        self.max_tokens = tk.IntVar(value=256)
+        self.temperature = tk.DoubleVar(value=0.8)
 
         # Docs chunking
         self.docs_dir = tk.StringVar()
@@ -386,6 +391,13 @@ class App(tk.Tk):
         self.lbl_content = ttk.Label(fr_cols, text="Content column (user):"); self.cb_content = ttk.Combobox(fr_cols, textvariable=self.content_col)
         self.lbl_id = ttk.Label(fr_cols, text="ID column (<None> for prefix):"); self.cb_id = ttk.Combobox(fr_cols, textvariable=self.id_col)
         self.lbl_prefix = ttk.Label(fr_cols, text="If no ID, use prefix:"); self.ent_prefix = ttk.Entry(fr_cols, textvariable=self.prefix_id)
+        # Batch inference parameters
+        self.chk_params = ttk.Checkbutton(fr_cols, text="Include max_tokens & temperature", variable=self.include_params, command=self.refresh_preview)
+        self.lbl_max_tokens = ttk.Label(fr_cols, text="Max tokens:")
+        self.ent_max_tokens = ttk.Entry(fr_cols, textvariable=self.max_tokens, width=10)
+        self.lbl_temperature = ttk.Label(fr_cols, text="Temperature:")
+        self.ent_temperature = ttk.Entry(fr_cols, textvariable=self.temperature, width=10)
+        # Finetune mappings
         self.lbl_asst = ttk.Label(fr_cols, text="Assistant column:"); self.cb_asst = ttk.Combobox(fr_cols, textvariable=self.assistant_col)
         self.lbl_in_instruct = ttk.Label(fr_cols, text="Input column:"); self.cb_in_instruct = ttk.Combobox(fr_cols, textvariable=self.instruct_in_col)
         self.lbl_out_instruct = ttk.Label(fr_cols, text="Output column:"); self.cb_out_instruct = ttk.Combobox(fr_cols, textvariable=self.instruct_out_col)
@@ -477,6 +489,10 @@ class App(tk.Tk):
         xscroll = ttk.Scrollbar(pr, orient="horizontal", command=self.preview_box.xview); xscroll.grid(row=3, column=0, sticky="ew", padx=6)
         self.preview_box.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
 
+        # Add traces to update preview when parameters change
+        self.max_tokens.trace_add("write", lambda *args: self.refresh_preview())
+        self.temperature.trace_add("write", lambda *args: self.refresh_preview())
+
         self.layout_for_mode()
         try:
             import ctypes
@@ -511,6 +527,7 @@ class App(tk.Tk):
             self.btn_in_csv.grid(row=0, column=2, padx=6, pady=6)
 
         for w in (self.lbl_content,self.cb_content,self.lbl_id,self.cb_id,self.lbl_prefix,self.ent_prefix,
+                  self.chk_params,self.lbl_max_tokens,self.ent_max_tokens,self.lbl_temperature,self.ent_temperature,
                   self.lbl_asst,self.cb_asst,self.lbl_in_instruct,self.cb_in_instruct,
                   self.lbl_out_instruct,self.cb_out_instruct,self.lbl_prompt_comp,self.cb_prompt_comp,
                   self.lbl_completion_comp,self.cb_completion_comp):
@@ -522,6 +539,9 @@ class App(tk.Tk):
             self.lbl_content.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_content.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_id.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_id.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_prefix.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.ent_prefix.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
+            self.chk_params.grid(row=r,column=0,columnspan=2,sticky="w",padx=6,pady=6); r+=1
+            self.lbl_max_tokens.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.ent_max_tokens.grid(row=r,column=1,sticky="w",padx=6,pady=6); r+=1
+            self.lbl_temperature.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.ent_temperature.grid(row=r,column=1,sticky="w",padx=6,pady=6); r+=1
         elif mode == "Finetune: Chat":
             self.lbl_content.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_content.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
             self.lbl_asst.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_asst.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
@@ -677,7 +697,11 @@ class App(tk.Tk):
             base, bump = cid, 1
             while cid in seen: bump+=1; cid=f"{base}-{bump}"
             seen.add(cid)
-            obj={"custom_id":cid,"body":{"messages":msgs}}
+            body = {"messages": msgs}
+            if self.include_params.get():
+                body["max_tokens"] = self.max_tokens.get()
+                body["temperature"] = self.temperature.get()
+            obj={"custom_id":cid,"body":body}
             line=json.dumps(obj, ensure_ascii=False); fh.write(line+"\n")
             written+=1; size_bytes+=len((line+"\n").encode("utf-8"))
         return written, size_bytes
@@ -779,13 +803,23 @@ class App(tk.Tk):
             return info
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
-            return (
-                '{ "custom_id": "request-N", "body": { "messages": [\n'
-                f'  {{"role": "system", "content": "{sys_prompt}"}},\n'
-                '  {"role": "user", "content": "Using only the context below, provide a concise answer to this request:'
-                " 'Summarize key facts and terms clearly'. If information is missing, say you don't know.\\n\\n"
-                'Context (source: <file>, chunk <i>):\\n...CHUNK TEXT HERE..."}\n]} }'
-            )
+            if mode == "Batch Inference (CSV)" and self.include_params.get():
+                return (
+                    '{ "custom_id": "request-N", "body": { '
+                    f'"max_tokens": {self.max_tokens.get()}, '
+                    f'"temperature": {self.temperature.get()}, '
+                    '"messages": [\n'
+                    f'  {{"role": "system", "content": "{sys_prompt}"}},\n'
+                    '  {"role": "user", "content": "...content..."}\n]} }'
+                )
+            else:
+                return (
+                    '{ "custom_id": "request-N", "body": { "messages": [\n'
+                    f'  {{"role": "system", "content": "{sys_prompt}"}},\n'
+                    '  {"role": "user", "content": "Using only the context below, provide a concise answer to this request:'
+                    " 'Summarize key facts and terms clearly'. If information is missing, say you don't know.\\n\\n"
+                    'Context (source: <file>, chunk <i>):\\n...CHUNK TEXT HERE..."}\n]} }'
+                )
         if mode == "Finetune: Chat":
             return (
                 '{ "messages": [\n'
