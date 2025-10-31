@@ -742,13 +742,34 @@ class App(tk.Tk):
         def traverse(obj, path="", depth=0):
             if depth > max_depth:
                 return
-            
+
+            # Attempt to parse JSON strings so we can discover nested fields even if
+            # the batch response stored the HTTP body as text.
+            if isinstance(obj, str):
+                stripped = obj.strip()
+                if stripped.startswith(("{", "[")):
+                    try:
+                        parsed = json.loads(stripped)
+                    except Exception:
+                        pass
+                    else:
+                        traverse(parsed, path, depth)
+                if path:
+                    fields.add(path)
+                return
+
             if isinstance(obj, dict):
                 for key, value in obj.items():
                     new_path = f"{path}.{key}" if path else key
-                    
+
                     if isinstance(value, (dict, list)):
                         traverse(value, new_path, depth + 1)
+                    elif isinstance(value, str):
+                        stripped = value.strip()
+                        if stripped.startswith(("{", "[")):
+                            traverse(value, new_path, depth + 1)
+                        if new_path:
+                            fields.add(new_path)
                     else:
                         fields.add(new_path)
             elif isinstance(obj, list):
@@ -757,6 +778,16 @@ class App(tk.Tk):
                     if isinstance(item, dict):
                         # For message arrays, include role-specific paths
                         traverse(item, f"{path}[{i}]", depth + 1)
+                    elif isinstance(item, (list, str)):
+                        if isinstance(item, str):
+                            stripped = item.strip()
+                            if stripped.startswith(("{", "[")):
+                                traverse(item, f"{path}[{i}]", depth + 1)
+                        else:
+                            traverse(item, f"{path}[{i}]", depth + 1)
+                        if path:
+                            fields.add(path)
+                        break
                     elif not isinstance(item, list):
                         # For simple lists, just note the array itself
                         fields.add(path)
@@ -990,33 +1021,58 @@ class App(tk.Tk):
         parts = path.split(".")
         current = obj
         
-        for part in parts:
+        for idx, part in enumerate(parts):
             if current is None:
                 return ""
             
             # Handle array indexing like "messages[0]"
-            if "[" in part and "]" in part:
-                try:
-                    key = part[:part.index("[")]
-                    index_str = part[part.index("[")+1:part.index("]")]
-                    index = int(index_str)
-                    
-                    if isinstance(current, dict) and key in current:
-                        current = current[key]
-                        if isinstance(current, list) and 0 <= index < len(current):
-                            current = current[index]
-                        else:
+            try:
+                # If we still have more path components and the current value is a
+                # JSON string, try to decode it so that nested lookups work even
+                # when the batch API stored the body as text.
+                if isinstance(current, str) and part and idx < len(parts) - 1:
+                    stripped = current.strip()
+                    if stripped.startswith(("{", "[")):
+                        try:
+                            current = json.loads(stripped)
+                        except Exception:
                             return ""
-                    else:
+
+                key_part = part
+                indexes = []
+
+                if "[" in part:
+                    key_part = part[:part.index("[")]
+                    rest = part[len(key_part):]
+                    while rest.startswith("["):
+                        close = rest.find("]")
+                        if close == -1:
+                            return ""
+                        indexes.append(rest[1:close])
+                        rest = rest[close + 1:]
+                    if rest:
                         return ""
-                except (ValueError, IndexError, KeyError):
-                    return ""
-            else:
-                if isinstance(current, dict):
-                    current = current.get(part)
-                else:
-                    return ""
-        
+
+                if key_part:
+                    if not isinstance(current, dict):
+                        return ""
+                    if key_part not in current:
+                        return ""
+                    current = current[key_part]
+
+                for index_str in indexes:
+                    try:
+                        index = int(index_str)
+                    except ValueError:
+                        return ""
+                    if not isinstance(current, list):
+                        return ""
+                    if not (0 <= index < len(current)):
+                        return ""
+                    current = current[index]
+            except Exception:
+                return ""
+
         # Convert to string representation
         if current is None:
             return ""
