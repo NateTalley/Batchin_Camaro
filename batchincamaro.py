@@ -149,15 +149,17 @@ def decode_escape_sequences(text: str) -> str:
         # We need to encode to bytes first, then decode with unicode_escape
         decoded = text.encode('utf-8').decode('unicode_escape')
         return decoded
-    except Exception:
-        # Fallback: manual replacement
+    except (UnicodeDecodeError, UnicodeError):
+        # Fallback: manual replacement with correct order
         result = text
+        # Replace double backslashes first to preserve literal backslashes
+        result = result.replace('\\\\', '\x00')  # Temporary placeholder
         result = result.replace('\\n', '\n')
         result = result.replace('\\t', '\t')
         result = result.replace('\\r', '\r')
-        result = result.replace('\\\\', '\\')
         result = result.replace("\\'", "'")
         result = result.replace('\\"', '"')
+        result = result.replace('\x00', '\\')  # Replace placeholder with single backslash
         return result
 
 # ------------------ Sentence-safe chunking (Docs mode) ------------------
@@ -807,13 +809,13 @@ class App(tk.Tk):
             except UnicodeDecodeError:
                 text = p.read_text(encoding="latin-1", errors="ignore")
             
-            # Show first N lines of original and decoded
+            # Only decode the preview portion for efficiency
             lines = text.split('\n')[:PREVIEW_LINES]
             original_preview = '\n'.join(lines)
             
-            decoded = decode_escape_sequences(text)
-            decoded_lines = decoded.split('\n')[:PREVIEW_LINES]
-            decoded_preview = '\n'.join(decoded_lines)
+            # Decode only the preview portion
+            decoded = decode_escape_sequences(original_preview)
+            decoded_preview = decoded
             
             return (f"=== Original (with escape sequences) ===\n{original_preview}\n\n"
                    f"=== Decoded (readable format) ===\n{decoded_preview}")
