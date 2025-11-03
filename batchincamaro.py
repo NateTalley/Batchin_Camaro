@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-# Dataset JSONL Builder + TXT → CSV parser
-# Adds:
-# - Separator-line detection for TXT parsing (====, ----, ****, etc.)
-# - "Run" button (same as Build Output)
+# Dataset JSONL Builder + Escape Sequence Decoder
+# Features:
+# - Batch inference from CSV
+# - Fine-tuning data generation (Chat, Instruct, Completions)
+# - Document chunking for RAG
+# - Escape sequence decoding (\n, \t, etc.)
 
-import csv, json, os, re, sys
+import csv, json, os, re, sys, codecs
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,7 +44,7 @@ MODES = [
     "Finetune: Instruct",
     "Finetune: Completions",
     "Docs → Batch Inference",
-    "TXT → CSV (parse)",
+    "Decode Escape Sequences",
 ]
 
 DEFAULT_PROMPTS = {
@@ -54,6 +56,7 @@ DEFAULT_PROMPTS = {
         "You are a helpful assistant. Use only the provided context to answer. "
         "If the answer isn't in the context, say you don't know."
     ),
+    "Decode Escape Sequences": "",
 }
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".rst", ".text", ".pdf", ".docx", ".rtf", ".csv"}
@@ -134,6 +137,35 @@ def iter_text_files(root: Path, suffixes) -> list[Path]:
             out.append(p)
     return out
 
+# ------------------ Escape sequence decoding ------------------
+def decode_escape_sequences(text: str) -> str:
+    """
+    Decode common escape sequences in text to their readable format.
+    Primary method handles: \\n, \\t, \\r, \\\\, \\', \\", \\x__ (hex), \\u____ (unicode), etc.
+    Fallback method handles: \\n, \\t, \\r, \\\\, \\', \\"
+    """
+    # Use Python's built-in decode with 'unicode_escape' for most sequences
+    try:
+        # Decode unicode escape sequences
+        decoded = codecs.decode(text, 'unicode_escape')
+        # If input was str, decode will return bytes, so decode back to str
+        if isinstance(decoded, bytes):
+            decoded = decoded.decode('utf-8')
+        return decoded
+    except (UnicodeDecodeError, ValueError):
+        # Fallback: manual replacement with correct order
+        # Note: This fallback only handles basic sequences, not hex or unicode
+        result = text
+        # Replace double backslashes first to preserve literal backslashes
+        result = result.replace('\\\\', '\x00')  # Temporary placeholder
+        result = result.replace('\\n', '\n')
+        result = result.replace('\\t', '\t')
+        result = result.replace('\\r', '\r')
+        result = result.replace("\\'", "'")
+        result = result.replace('\\"', '"')
+        result = result.replace('\x00', '\\')  # Replace placeholder with single backslash
+        return result
+
 # ------------------ Sentence-safe chunking (Docs mode) ------------------
 _SENT_SPLIT = re.compile(r'(?<=[.!?])\s+(?=[A-Z0-9"\'(])')
 
@@ -183,104 +215,6 @@ def chunk_sentence_safe(text: str, *, target_words: int, overlap_sents: int, by_
     if window: chunks.append(" ".join(window).strip())
     return chunks
 
-# ------------------ TXT → CSV parsing heuristics ------------------
-_HEADING_NUM = re.compile(r'^\s*(?:\d+\.|[IVXLC]+\.?)\s+[^\s].*$')  # "1. Title", "II. Title"
-# separator lines like "====", "----", "***", "____", "~~~~", or mixed runs of the same char
-_SEP_RUN = re.compile(r'^\s*([=\-\*_~#]{3,})\s*$')
-
-def is_separator(line: str, cfg) -> bool:
-    if not cfg["split_on_separators"]:
-        return False
-    s = line.strip()
-    if len(s) < cfg["min_separator_len"]:
-        return False
-    # all same char or matches SEPARATOR RUN pattern
-    return (len(set(s)) == 1 and s[0] in "=*-_~#") or bool(_SEP_RUN.match(line))
-
-def is_heading(line: str, next_is_blank: bool, cfg) -> bool:
-    s = line.strip()
-    if len(s) < cfg["min_heading_chars"] or len(s) > cfg["max_heading_chars"]:
-        return False
-    if cfg["detect_numbered"] and _HEADING_NUM.match(s):
-        return True
-    if cfg["detect_all_caps"] and s.isupper() and re.search(r'[A-Z]', s):
-        return True
-    if cfg["detect_title_case"]:
-        words = s.split()
-        if words and words[0][0].isupper():
-            cap_words = sum(1 for w in words if w[:1].isupper())
-            if cap_words >= max(1, int(0.6 * len(words))):
-                return True
-    return next_is_blank
-
-def parse_txt_to_records(txt: str, cfg) -> list[dict]:
-    """
-    Returns list of {title, content}. Ignores lines shorter than cfg['min_line_len'].
-    Starts a new record when a heading or separator is detected.
-    Blank lines separate paragraphs.
-    """
-    lines = txt.replace('\r\n','\n').split('\n')
-    filtered = [ln for ln in lines if len(ln.strip()) >= cfg["min_line_len"] or ln.strip()=="" or is_separator(ln, cfg)]
-
-    records = []
-    cur_title = None
-    buf = []
-
-    def derive_title_and_content():
-        nonlocal cur_title, buf
-        title = cur_title
-        lines_buf = [b for b in buf if b != ""]
-        if title is None and lines_buf:
-            first = lines_buf[0].strip()
-            if is_heading(first, True, cfg):
-                title = first
-                # remove first heading line from buf
-                drop = True
-            else:
-                drop = False
-        else:
-            drop = False
-
-        content_lines = buf.copy()
-        if drop and content_lines and content_lines[0].strip():
-            content_lines = content_lines[1:]
-
-        # collapse multiple blank lines to single paragraph breaks
-        content = "\n".join(p for p in "\n".join(content_lines).split("\n\n") if p.strip()).strip()
-        return title or "", content
-
-    def flush():
-        nonlocal cur_title, buf
-        title, content = derive_title_and_content()
-        if title or content:
-            records.append({"title": title, "content": content})
-        cur_title, buf = None, []
-
-    for i, ln in enumerate(filtered):
-        if is_separator(ln, cfg):
-            # Separator marks end of current section
-            if buf or cur_title:
-                flush()
-            continue
-
-        nxt_blank = (i+1 < len(filtered) and filtered[i+1].strip() == "")
-        if ln.strip() == "":
-            if buf and buf[-1] != "": buf.append("")
-            continue
-
-        if is_heading(ln, nxt_blank, cfg):
-            if buf:
-                flush()
-            cur_title = ln.strip()
-            continue
-
-        buf.append(ln.strip())
-
-    if buf or cur_title:
-        flush()
-
-    return [r for r in records if r["title"] or r["content"]]
-
 # ------------------ GUI ------------------
 class App(tk.Tk):
     def __init__(self):
@@ -322,33 +256,15 @@ class App(tk.Tk):
         self.ocr_dpi = tk.IntVar(value=300)
         self.suffix_extra = tk.StringVar(value="")
 
-        # TXT → CSV parsing config
-        self.txt_path = tk.StringVar()
-        self.min_line_len = tk.IntVar(value=20)
-        self.detect_all_caps = tk.BooleanVar(value=True)
-        self.detect_title_case = tk.BooleanVar(value=True)
-        self.detect_numbered = tk.BooleanVar(value=True)
-        self.min_heading_chars = tk.IntVar(value=3)
-        self.max_heading_chars = tk.IntVar(value=120)
-        self.split_on_separators = tk.BooleanVar(value=True)
-        self.min_separator_len = tk.IntVar(value=5)
-        # Section selection
-        self.start_line = tk.IntVar(value=1)
-        self.end_line = tk.IntVar(value=-1)  # -1 means end of file
-        self.use_line_range = tk.BooleanVar(value=False)
-        # Delimiter control
-        self.csv_delimiter = tk.StringVar(value=",")
-        # Header handling
-        self.has_header_row = tk.BooleanVar(value=False)
-        self.skip_header = tk.BooleanVar(value=False)
-        self.custom_title_header = tk.StringVar(value="title")
-        self.custom_content_header = tk.StringVar(value="content")
+        # Escape sequence decoding
+        self.escape_input_path = tk.StringVar()
+        self.escape_output_path = tk.StringVar()
 
         # Menu
         mbar = tk.Menu(self)
         filem = tk.Menu(mbar, tearoff=0)
         filem.add_command(label="Open CSV…", command=self.menu_open_csv)
-        filem.add_command(label="Open TXT…", command=self.menu_open_txt)
+        filem.add_command(label="Open Input File…", command=self.menu_open_escape_input)
         filem.add_command(label="Save Output As…", command=self.menu_save_output)
         filem.add_separator()
         filem.add_command(label="Exit", command=self.destroy)
@@ -377,10 +293,10 @@ class App(tk.Tk):
         self.lbl_docs = ttk.Label(fr_paths, text="Docs folder:")
         self.ent_docs = ttk.Entry(fr_paths, textvariable=self.docs_dir)
         self.btn_docs = ttk.Button(fr_paths, text="Browse…", command=self.browse_docs, width=12)
-        # TXT
-        self.lbl_txt = ttk.Label(fr_paths, text="Input TXT:")
-        self.ent_txt = ttk.Entry(fr_paths, textvariable=self.txt_path)
-        self.btn_txt = ttk.Button(fr_paths, text="Open…", command=self.menu_open_txt, width=12)
+        # Escape input
+        self.lbl_escape_input = ttk.Label(fr_paths, text="Input file:")
+        self.ent_escape_input = ttk.Entry(fr_paths, textvariable=self.escape_input_path)
+        self.btn_escape_input = ttk.Button(fr_paths, text="Open…", command=self.menu_open_escape_input, width=12)
 
         ttk.Label(fr_paths, text="Output file:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_paths, textvariable=self.out_path).grid(row=3, column=1, sticky="we", padx=6, pady=6)
@@ -420,44 +336,10 @@ class App(tk.Tk):
         ttk.Label(fr_docs, text="Extra suffixes:").grid(row=1, column=5, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_docs, textvariable=self.suffix_extra).grid(row=1, column=6, sticky="we", padx=6, pady=6)
 
-        # TXT → CSV settings
-        fr_txt = ttk.LabelFrame(left, text="TXT → CSV parsing")
-        fr_txt.pack(fill="x", padx=10, pady=8)
-        for i in (1,3,5): fr_txt.columnconfigure(i, weight=1)
-        
-        # Row 0: Line filtering and heading detection
-        ttk.Label(fr_txt, text="Ignore lines shorter than:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.min_line_len, width=10).grid(row=0, column=1, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Min heading chars:").grid(row=0, column=2, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.min_heading_chars, width=10).grid(row=0, column=3, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Max heading chars:").grid(row=0, column=4, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.max_heading_chars, width=10).grid(row=0, column=5, sticky="w", padx=6, pady=6)
-        
-        # Row 1: Detection options
-        ttk.Checkbutton(fr_txt, text="Detect ALL CAPS headings", variable=self.detect_all_caps).grid(row=1, column=0, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_txt, text="Detect Title Case headings", variable=self.detect_title_case).grid(row=1, column=1, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_txt, text="Detect numbered headings", variable=self.detect_numbered).grid(row=1, column=2, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_txt, text="Split on separator lines (====, ----, ***)", variable=self.split_on_separators).grid(row=1, column=3, columnspan=2, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Min separator len:").grid(row=1, column=5, sticky="w", padx=6, pady=6)
-        
-        # Row 2: Section selection
-        ttk.Checkbutton(fr_txt, text="Parse specific line range", variable=self.use_line_range).grid(row=2, column=0, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Start line:").grid(row=2, column=1, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.start_line, width=10).grid(row=2, column=2, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="End line (-1=end):").grid(row=2, column=3, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.end_line, width=10).grid(row=2, column=4, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.min_separator_len, width=10).grid(row=2, column=5, sticky="w", padx=6, pady=6)
-        
-        # Row 3: CSV output delimiter
-        ttk.Label(fr_txt, text="CSV delimiter:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.csv_delimiter, width=10).grid(row=3, column=1, sticky="w", padx=6, pady=6)
-        
-        # Row 4: Header handling
-        ttk.Checkbutton(fr_txt, text="First row is header (skip it)", variable=self.has_header_row).grid(row=4, column=0, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Title header name:").grid(row=4, column=1, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.custom_title_header, width=12).grid(row=4, column=2, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_txt, text="Content header name:").grid(row=4, column=3, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_txt, textvariable=self.custom_content_header, width=12).grid(row=4, column=4, sticky="w", padx=6, pady=6)
+        # Escape sequence decoding settings
+        fr_escape = ttk.LabelFrame(left, text="Escape Sequence Decoding")
+        fr_escape.pack(fill="x", padx=10, pady=8)
+        ttk.Label(fr_escape, text="Decodes escape sequences like \\n, \\t, \\r, \\\\, etc. into readable format").pack(padx=6, pady=6, anchor="w")
 
         # Prompt
         fr_prompt = ttk.LabelFrame(left, text="System Prompt (default per mode)")
@@ -508,7 +390,7 @@ class App(tk.Tk):
     def layout_for_mode(self):
         for w in (self.lbl_in_csv, self.ent_in_csv, self.btn_in_csv,
                   self.lbl_docs, self.ent_docs, self.btn_docs,
-                  self.lbl_txt, self.ent_txt, self.btn_txt):
+                  self.lbl_escape_input, self.ent_escape_input, self.btn_escape_input):
             try: w.grid_forget()
             except Exception: pass
 
@@ -517,10 +399,10 @@ class App(tk.Tk):
             self.lbl_docs.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_docs.grid(row=0, column=1, sticky="we", padx=6, pady=6)
             self.btn_docs.grid(row=0, column=2, padx=6, pady=6)
-        elif mode == "TXT → CSV (parse)":
-            self.lbl_txt.grid(row=0, column=0, sticky="w", padx=6, pady=6)
-            self.ent_txt.grid(row=0, column=1, sticky="we", padx=6, pady=6)
-            self.btn_txt.grid(row=0, column=2, padx=6, pady=6)
+        elif mode == "Decode Escape Sequences":
+            self.lbl_escape_input.grid(row=0, column=0, sticky="w", padx=6, pady=6)
+            self.ent_escape_input.grid(row=0, column=1, sticky="we", padx=6, pady=6)
+            self.btn_escape_input.grid(row=0, column=2, padx=6, pady=6)
         else:
             self.lbl_in_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_in_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
@@ -553,7 +435,7 @@ class App(tk.Tk):
             self.lbl_completion_comp.grid(row=r,column=0,sticky="w",padx=6,pady=6); self.cb_completion_comp.grid(row=r,column=1,sticky="we",padx=6,pady=6); r+=1
 
         self._set_group_state("Docs Chunking", "normal" if mode=="Docs → Batch Inference" else "disabled")
-        self._set_group_state("TXT → CSV parsing", "normal" if mode=="TXT → CSV (parse)" else "disabled")
+        self._set_group_state("Escape Sequence Decoding", "normal" if mode=="Decode Escape Sequences" else "disabled")
 
     def _set_group_state(self, group_title: str, state: str):
         for child in self._children_of_label_frame(group_title):
@@ -575,16 +457,16 @@ class App(tk.Tk):
         if not path: return
         self.load_csv(path); self.refresh_preview()
 
-    def menu_open_txt(self):
-        path = filedialog.askopenfilename(title="Select TXT", filetypes=[("Text files","*.txt"),("All files","*.*")])
+    def menu_open_escape_input(self):
+        path = filedialog.askopenfilename(title="Select Input File", filetypes=[("Text files","*.txt"),("All files","*.*")])
         if not path: return
-        self.txt_path.set(path); self.refresh_preview()
+        self.escape_input_path.set(path); self.refresh_preview()
 
     def menu_save_output(self):
         mode = self.mode.get()
-        if mode == "TXT → CSV (parse)":
-            ftypes = [("CSV files","*.csv"),("All files","*.*")]
-            dflt = ".csv"
+        if mode == "Decode Escape Sequences":
+            ftypes = [("Text files","*.txt"),("All files","*.*")]
+            dflt = ".txt"
         else:
             ftypes = [("JSON Lines","*.jsonl"),("All files","*.*")]
             dflt = ".jsonl"
@@ -618,7 +500,7 @@ class App(tk.Tk):
         self.content_col.set(guess if guess else (vals[0] if vals else ""))
         self.id_col.set("<None>")
         self.status.set(f"Loaded {len(self.rows)} rows, {len(self.headers)} columns.")
-        if not self.out_path.get() and self.mode.get()!="TXT → CSV (parse)":
+        if not self.out_path.get() and self.mode.get() != "Decode Escape Sequences":
             base = os.path.splitext(os.path.basename(path))[0]; self.out_path.set(f"{base}_batch.jsonl")
 
     # ----- build -----
@@ -627,16 +509,10 @@ class App(tk.Tk):
         out_path = self._ensure_out_path()
         if not out_path: return
         try:
-            if mode == "TXT → CSV (parse)":
-                recs = self._parse_txt_records()
-                delimiter = self.csv_delimiter.get() or ","
-                title_header = self.custom_title_header.get() or "title"
-                content_header = self.custom_content_header.get() or "content"
-                with open(out_path, "w", encoding="utf-8", newline="") as fh:
-                    w = csv.writer(fh, delimiter=delimiter)
-                    w.writerow([title_header, content_header])
-                    for r in recs: w.writerow([r["title"], r["content"]])
-                count = len(recs); size = Path(out_path).stat().st_size
+            if mode == "Decode Escape Sequences":
+                self._build_escape_decode(out_path)
+                files_processed = 1; size = Path(out_path).stat().st_size
+                count = files_processed  # For consistency with other modes
             else:
                 with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
                     if mode == "Batch Inference (CSV)":
@@ -661,7 +537,7 @@ class App(tk.Tk):
             else:
                 messagebox.showinfo("Done", f"Wrote {count} lines\n{out_path}\nSize: {size_mb:.1f} MB")
         else:
-            messagebox.showinfo("Done", f"Wrote {count} rows\n{out_path}")
+            messagebox.showinfo("Done", f"Wrote output to:\n{out_path}")
         self.status.set(f"Finished: {count} → {os.path.basename(out_path)}")
 
     def _ensure_out_path(self):
@@ -670,8 +546,8 @@ class App(tk.Tk):
             self.menu_save_output(); out_path = self.out_path.get().strip()
             if not out_path: return None
         if Path(out_path).suffix == "":
-            if self.mode.get()=="TXT → CSV (parse)":
-                out_path += ".csv"
+            if self.mode.get()=="Decode Escape Sequences":
+                out_path += ".txt"
             else:
                 out_path += ".jsonl"
             self.out_path.set(out_path)
@@ -780,6 +656,22 @@ class App(tk.Tk):
         if written==0: raise ValueError("No chunks produced from documents.")
         return written, size_bytes
 
+    def _build_escape_decode(self, out_path):
+        """Decode escape sequences from input file and write to output."""
+        input_path = self.escape_input_path.get().strip()
+        if not input_path: raise ValueError("Select an input file.")
+        p = Path(input_path)
+        if not p.is_file(): raise ValueError("Input file not found.")
+        
+        try:
+            text = p.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = p.read_text(encoding="latin-1", errors="ignore")
+        
+        decoded = decode_escape_sequences(text)
+        
+        Path(out_path).write_text(decoded, encoding="utf-8")
+
     # ----- preview -----
     def refresh_preview(self):
         prefix = self._make_common_prefix_preview()
@@ -790,17 +682,8 @@ class App(tk.Tk):
 
     def _make_common_prefix_preview(self) -> str:
         mode = self.mode.get()
-        if mode == "TXT → CSV (parse)":
-            delimiter = self.csv_delimiter.get() or ","
-            title_h = self.custom_title_header.get() or "title"
-            content_h = self.custom_content_header.get() or "content"
-            delim_name = {"\\t": "tab", ",": "comma", ";": "semicolon", "|": "pipe"}.get(delimiter, delimiter)
-            info = f"CSV output with {delim_name} delimiter\nColumns: {title_h}, {content_h}"
-            if self.use_line_range.get():
-                info += f"\nParsing lines {self.start_line.get()} to {self.end_line.get() if self.end_line.get() > 0 else 'end'}"
-            if self.has_header_row.get():
-                info += "\nSkipping first row as header"
-            return info
+        if mode == "Decode Escape Sequences":
+            return "Decodes escape sequences (\\n → newline, \\t → tab, etc.)\nInput file will be decoded and saved to output."
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
             if mode == "Batch Inference (CSV)" and self.include_params.get():
@@ -844,7 +727,7 @@ class App(tk.Tk):
                 return self._prev_ft_compl()
             if mode == "Docs → Batch Inference":
                 return self._prev_docs_batch()
-            return self._prev_txt_csv()
+            return self._prev_escape_decode()
         except Exception as e:
             return f"(preview error) {e}"
 
@@ -919,82 +802,32 @@ class App(tk.Tk):
                 if n>=PREVIEW_LINES: return "\n".join(out)
         return "\n".join(out) if out else "(no chunks produced)"
 
-    def _prev_txt_csv(self):
-        if not self.txt_path.get(): return "Choose a TXT file."
+    def _prev_escape_decode(self):
+        input_path = self.escape_input_path.get().strip()
+        if not input_path: return "Choose an input file."
         try:
-            # Show raw text preview first (limited lines)
-            p = Path(self.txt_path.get().strip())
-            if not p.is_file():
-                return "TXT file not found."
+            p = Path(input_path)
+            if not p.is_file(): return "Input file not found."
             
             try:
-                full_txt = p.read_text(encoding="utf-8")
+                text = p.read_text(encoding="utf-8")
             except UnicodeDecodeError:
-                full_txt = p.read_text(encoding="latin-1", errors="ignore")
+                text = p.read_text(encoding="latin-1", errors="ignore")
             
-            lines = full_txt.split('\n')
-            preview_info = f"Total lines in file: {len(lines)}\n"
+            # Only decode the preview portion for efficiency
+            lines = text.split('\n')[:PREVIEW_LINES]
+            original_preview = '\n'.join(lines)
             
-            if self.use_line_range.get():
-                start_idx = max(0, int(self.start_line.get()) - 1)
-                end_idx = int(self.end_line.get())
-                if end_idx < 0 or end_idx > len(lines):
-                    end_idx = len(lines)
-                preview_info += f"Parsing lines {start_idx + 1} to {end_idx}\n"
+            # Decode only the preview portion
+            decoded = decode_escape_sequences(original_preview)
+            decoded_preview = decoded
             
-            preview_info += "\n=== Parsed Records Preview ===\n"
-            
-            recs = self._parse_txt_records()
-            preview_info += f"Total parsed records: {len(recs)}\n\n"
-            
-            out = [preview_info]
-            for i, r in enumerate(recs[:PREVIEW_LINES], 1):
-                title = r["title"] or "(no title)"
-                content_preview = r['content'][:200] + "..." if len(r['content']) > 200 else r['content']
-                out.append(f"Record {i}:\n  Title: {title}\n  Content: {content_preview}\n---")
-            return "\n".join(out) if len(out) > 1 else out[0] + "(no records)"
+            return (f"=== Original (with escape sequences) ===\n{original_preview}\n\n"
+                   f"=== Decoded (readable format) ===\n{decoded_preview}")
         except Exception as e:
-            return f"(parse error) {e}"
+            return f"(preview error) {e}"
 
     # ----- helpers -----
-    def _parse_txt_records(self):
-        p = Path(self.txt_path.get().strip())
-        if not p.is_file():
-            raise ValueError("TXT file not found.")
-        try:
-            txt = p.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            txt = p.read_text(encoding="latin-1", errors="ignore")
-        
-        # Handle section selection if enabled
-        if self.use_line_range.get():
-            lines = txt.split('\n')
-            start_idx = max(0, int(self.start_line.get()) - 1)  # Convert to 0-indexed
-            end_idx = int(self.end_line.get())
-            if end_idx < 0 or end_idx > len(lines):
-                end_idx = len(lines)
-            lines = lines[start_idx:end_idx]
-            txt = '\n'.join(lines)
-        
-        # Skip header row if enabled
-        if self.has_header_row.get():
-            lines = txt.split('\n')
-            if lines:
-                lines = lines[1:]  # Skip first line
-                txt = '\n'.join(lines)
-        
-        cfg = {
-            "min_line_len": max(0, int(self.min_line_len.get())),
-            "detect_all_caps": bool(self.detect_all_caps.get()),
-            "detect_title_case": bool(self.detect_title_case.get()),
-            "detect_numbered": bool(self.detect_numbered.get()),
-            "min_heading_chars": max(1, int(self.min_heading_chars.get())),
-            "max_heading_chars": max(10, int(self.max_heading_chars.get())),
-            "split_on_separators": bool(self.split_on_separators.get()),
-            "min_separator_len": max(3, int(self.min_separator_len.get())),
-        }
-        return parse_txt_to_records(txt, cfg)
-
     @staticmethod
     def _guess_content_col(headers):
         candidates = ["text","prompt","content","query","question","input","user","instruction"]
