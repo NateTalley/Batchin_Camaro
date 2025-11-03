@@ -141,16 +141,21 @@ def iter_text_files(root: Path, suffixes) -> list[Path]:
 def decode_escape_sequences(text: str) -> str:
     """
     Decode common escape sequences in text to their readable format.
-    Handles: \\n, \\t, \\r, \\\\, \\', \\", \\x__ (hex), \\u____ (unicode), etc.
+    Primary method handles: \\n, \\t, \\r, \\\\, \\', \\", \\x__ (hex), \\u____ (unicode), etc.
+    Fallback method handles: \\n, \\t, \\r, \\\\, \\', \\"
     """
     # Use Python's built-in decode with 'unicode_escape' for most sequences
     try:
-        # First handle the string as if it contains escape sequences
-        # We need to encode to bytes first, then decode with unicode_escape
-        decoded = text.encode('utf-8').decode('unicode_escape')
+        # Decode unicode escape sequences
+        import codecs
+        decoded = codecs.decode(text, 'unicode_escape')
+        # If input was str, decode will return bytes, so decode back to str
+        if isinstance(decoded, bytes):
+            decoded = decoded.decode('utf-8')
         return decoded
-    except (UnicodeDecodeError, UnicodeError):
+    except (UnicodeDecodeError, ValueError):
         # Fallback: manual replacement with correct order
+        # Note: This fallback only handles basic sequences, not hex or unicode
         result = text
         # Replace double backslashes first to preserve literal backslashes
         result = result.replace('\\\\', '\x00')  # Temporary placeholder
@@ -496,7 +501,7 @@ class App(tk.Tk):
         self.content_col.set(guess if guess else (vals[0] if vals else ""))
         self.id_col.set("<None>")
         self.status.set(f"Loaded {len(self.rows)} rows, {len(self.headers)} columns.")
-        if not self.out_path.get() and self.mode.get() not in ("Decode Escape Sequences",):
+        if not self.out_path.get() and self.mode.get() != "Decode Escape Sequences":
             base = os.path.splitext(os.path.basename(path))[0]; self.out_path.set(f"{base}_batch.jsonl")
 
     # ----- build -----
