@@ -6,7 +6,7 @@
 # - Document chunking for RAG
 # - Escape sequence decoding (\n, \t, etc.)
 
-import csv, json, os, re, sys
+import csv, json, os, re, sys, codecs
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
@@ -147,7 +147,6 @@ def decode_escape_sequences(text: str) -> str:
     # Use Python's built-in decode with 'unicode_escape' for most sequences
     try:
         # Decode unicode escape sequences
-        import codecs
         decoded = codecs.decode(text, 'unicode_escape')
         # If input was str, decode will return bytes, so decode back to str
         if isinstance(decoded, bytes):
@@ -512,7 +511,8 @@ class App(tk.Tk):
         try:
             if mode == "Decode Escape Sequences":
                 self._build_escape_decode(out_path)
-                count = 1; size = Path(out_path).stat().st_size
+                files_processed = 1; size = Path(out_path).stat().st_size
+                count = files_processed  # For consistency with other modes
             else:
                 with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
                     if mode == "Batch Inference (CSV)":
