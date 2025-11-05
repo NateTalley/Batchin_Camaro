@@ -45,6 +45,7 @@ MODES = [
     "Finetune: Completions",
     "Docs → Batch Inference",
     "Decode Escape Sequences",
+    "Batch Output → TXT/CSV",
 ]
 
 DEFAULT_PROMPTS = {
@@ -57,6 +58,7 @@ DEFAULT_PROMPTS = {
         "If the answer isn't in the context, say you don't know."
     ),
     "Decode Escape Sequences": "",
+    "Batch Output → TXT/CSV": "",
 }
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".rst", ".text", ".pdf", ".docx", ".rtf", ".csv"}
@@ -260,6 +262,11 @@ class App(tk.Tk):
         self.escape_input_path = tk.StringVar()
         self.escape_output_path = tk.StringVar()
 
+        # Batch output processing
+        self.batch_output_input_path = tk.StringVar()
+        self.batch_output_original_path = tk.StringVar()
+        self.batch_output_format = tk.StringVar(value="CSV")
+
         # Menu
         mbar = tk.Menu(self)
         filem = tk.Menu(mbar, tearoff=0)
@@ -298,6 +305,15 @@ class App(tk.Tk):
         self.ent_escape_input = ttk.Entry(fr_paths, textvariable=self.escape_input_path)
         self.btn_escape_input = ttk.Button(fr_paths, text="Open…", command=self.menu_open_escape_input, width=12)
 
+        # Batch output processing
+        self.lbl_batch_output_input = ttk.Label(fr_paths, text="Batch output JSONL:")
+        self.ent_batch_output_input = ttk.Entry(fr_paths, textvariable=self.batch_output_input_path)
+        self.btn_batch_output_input = ttk.Button(fr_paths, text="Open…", command=self.menu_open_batch_output, width=12)
+        
+        self.lbl_batch_output_original = ttk.Label(fr_paths, text="Original input JSONL (optional):")
+        self.ent_batch_output_original = ttk.Entry(fr_paths, textvariable=self.batch_output_original_path)
+        self.btn_batch_output_original = ttk.Button(fr_paths, text="Open…", command=self.menu_open_batch_original, width=12)
+
         ttk.Label(fr_paths, text="Output file:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_paths, textvariable=self.out_path).grid(row=3, column=1, sticky="we", padx=6, pady=6)
         ttk.Button(fr_paths, text="Save As…", command=self.menu_save_output, width=12).grid(row=3, column=2, padx=6, pady=6)
@@ -319,6 +335,13 @@ class App(tk.Tk):
         self.lbl_out_instruct = ttk.Label(fr_cols, text="Output column:"); self.cb_out_instruct = ttk.Combobox(fr_cols, textvariable=self.instruct_out_col)
         self.lbl_prompt_comp = ttk.Label(fr_cols, text="Prompt column:"); self.cb_prompt_comp = ttk.Combobox(fr_cols, textvariable=self.comp_prompt_col)
         self.lbl_completion_comp = ttk.Label(fr_cols, text="Completion column:"); self.cb_completion_comp = ttk.Combobox(fr_cols, textvariable=self.comp_completion_col)
+
+        # Batch output format selection
+        fr_batch_output = ttk.LabelFrame(left, text="Batch Output Format"); fr_batch_output.pack(fill="x", padx=10, pady=8)
+        ttk.Label(fr_batch_output, text="Output format:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_batch_output, text="CSV", variable=self.batch_output_format, value="CSV", command=self.refresh_preview).grid(row=0, column=1, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_batch_output, text="TXT", variable=self.batch_output_format, value="TXT", command=self.refresh_preview).grid(row=0, column=2, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_batch_output, text="CSV: Two columns (Input, Output) | TXT: Plain text with separators").grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=6)
 
         # Docs chunking
         fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); fr_docs.pack(fill="x", padx=10, pady=8)
@@ -390,7 +413,9 @@ class App(tk.Tk):
     def layout_for_mode(self):
         for w in (self.lbl_in_csv, self.ent_in_csv, self.btn_in_csv,
                   self.lbl_docs, self.ent_docs, self.btn_docs,
-                  self.lbl_escape_input, self.ent_escape_input, self.btn_escape_input):
+                  self.lbl_escape_input, self.ent_escape_input, self.btn_escape_input,
+                  self.lbl_batch_output_input, self.ent_batch_output_input, self.btn_batch_output_input,
+                  self.lbl_batch_output_original, self.ent_batch_output_original, self.btn_batch_output_original):
             try: w.grid_forget()
             except Exception: pass
 
@@ -403,6 +428,13 @@ class App(tk.Tk):
             self.lbl_escape_input.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_escape_input.grid(row=0, column=1, sticky="we", padx=6, pady=6)
             self.btn_escape_input.grid(row=0, column=2, padx=6, pady=6)
+        elif mode == "Batch Output → TXT/CSV":
+            self.lbl_batch_output_input.grid(row=0, column=0, sticky="w", padx=6, pady=6)
+            self.ent_batch_output_input.grid(row=0, column=1, sticky="we", padx=6, pady=6)
+            self.btn_batch_output_input.grid(row=0, column=2, padx=6, pady=6)
+            self.lbl_batch_output_original.grid(row=1, column=0, sticky="w", padx=6, pady=6)
+            self.ent_batch_output_original.grid(row=1, column=1, sticky="we", padx=6, pady=6)
+            self.btn_batch_output_original.grid(row=1, column=2, padx=6, pady=6)
         else:
             self.lbl_in_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_in_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
@@ -436,6 +468,7 @@ class App(tk.Tk):
 
         self._set_group_state("Docs Chunking", "normal" if mode=="Docs → Batch Inference" else "disabled")
         self._set_group_state("Escape Sequence Decoding", "normal" if mode=="Decode Escape Sequences" else "disabled")
+        self._set_group_state("Batch Output Format", "normal" if mode=="Batch Output → TXT/CSV" else "disabled")
 
     def _set_group_state(self, group_title: str, state: str):
         for child in self._children_of_label_frame(group_title):
@@ -462,11 +495,28 @@ class App(tk.Tk):
         if not path: return
         self.escape_input_path.set(path); self.refresh_preview()
 
+    def menu_open_batch_output(self):
+        path = filedialog.askopenfilename(title="Select Batch Output JSONL", filetypes=[("JSON Lines","*.jsonl"),("All files","*.*")])
+        if not path: return
+        self.batch_output_input_path.set(path); self.refresh_preview()
+
+    def menu_open_batch_original(self):
+        path = filedialog.askopenfilename(title="Select Original Input JSONL (Optional)", filetypes=[("JSON Lines","*.jsonl"),("All files","*.*")])
+        if not path: return
+        self.batch_output_original_path.set(path); self.refresh_preview()
+
     def menu_save_output(self):
         mode = self.mode.get()
         if mode == "Decode Escape Sequences":
             ftypes = [("Text files","*.txt"),("All files","*.*")]
             dflt = ".txt"
+        elif mode == "Batch Output → TXT/CSV":
+            if self.batch_output_format.get() == "CSV":
+                ftypes = [("CSV files","*.csv"),("All files","*.*")]
+                dflt = ".csv"
+            else:
+                ftypes = [("Text files","*.txt"),("All files","*.*")]
+                dflt = ".txt"
         else:
             ftypes = [("JSON Lines","*.jsonl"),("All files","*.*")]
             dflt = ".jsonl"
@@ -513,6 +563,10 @@ class App(tk.Tk):
                 self._build_escape_decode(out_path)
                 files_processed = 1; size = Path(out_path).stat().st_size
                 count = files_processed  # For consistency with other modes
+            elif mode == "Batch Output → TXT/CSV":
+                self._build_batch_output(out_path)
+                size = Path(out_path).stat().st_size
+                count = 1  # For consistency with other modes
             else:
                 with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
                     if mode == "Batch Inference (CSV)":
@@ -546,8 +600,11 @@ class App(tk.Tk):
             self.menu_save_output(); out_path = self.out_path.get().strip()
             if not out_path: return None
         if Path(out_path).suffix == "":
-            if self.mode.get()=="Decode Escape Sequences":
+            mode = self.mode.get()
+            if mode == "Decode Escape Sequences":
                 out_path += ".txt"
+            elif mode == "Batch Output → TXT/CSV":
+                out_path += ".csv" if self.batch_output_format.get() == "CSV" else ".txt"
             else:
                 out_path += ".jsonl"
             self.out_path.set(out_path)
@@ -672,6 +729,84 @@ class App(tk.Tk):
         
         Path(out_path).write_text(decoded, encoding="utf-8")
 
+    def _build_batch_output(self, out_path):
+        """Process batch output JSONL and extract input/output to TXT or CSV."""
+        batch_output_path = self.batch_output_input_path.get().strip()
+        if not batch_output_path: raise ValueError("Select a batch output JSONL file.")
+        if not Path(batch_output_path).is_file(): raise ValueError("Batch output file not found.")
+        
+        # Load original input JSONL if provided
+        original_input_path = self.batch_output_original_path.get().strip()
+        input_map = {}
+        if original_input_path and Path(original_input_path).is_file():
+            try:
+                with open(original_input_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line: continue
+                        try:
+                            obj = json.loads(line)
+                            custom_id = obj.get("custom_id", "")
+                            # Extract user message content from original input
+                            messages = obj.get("body", {}).get("messages", [])
+                            user_content = ""
+                            for msg in messages:
+                                if msg.get("role") == "user":
+                                    user_content = msg.get("content", "")
+                                    break
+                            if custom_id and user_content:
+                                input_map[custom_id] = user_content
+                        except json.JSONDecodeError:
+                            continue
+            except Exception as e:
+                raise ValueError(f"Failed to read original input file: {e}")
+        
+        # Parse batch output
+        results = []
+        with open(batch_output_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line: continue
+                try:
+                    obj = json.loads(line)
+                    custom_id = obj.get("custom_id", "")
+                    
+                    # Get input content (from original file or custom_id)
+                    input_content = input_map.get(custom_id, custom_id)
+                    
+                    # Extract output from response
+                    output_content = ""
+                    response = obj.get("response", {})
+                    if response:
+                        body = response.get("body", {})
+                        choices = body.get("choices", [])
+                        if choices and len(choices) > 0:
+                            message = choices[0].get("message", {})
+                            output_content = message.get("content", "")
+                    
+                    results.append((input_content, output_content))
+                except json.JSONDecodeError:
+                    continue
+        
+        if not results:
+            raise ValueError("No valid results found in batch output file.")
+        
+        # Write output
+        output_format = self.batch_output_format.get()
+        if output_format == "CSV":
+            with open(out_path, "w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Input", "Output"])
+                for input_content, output_content in results:
+                    writer.writerow([input_content, output_content])
+        else:  # TXT
+            with open(out_path, "w", encoding="utf-8") as f:
+                for i, (input_content, output_content) in enumerate(results, 1):
+                    f.write(f"=== Entry {i} ===\n")
+                    f.write(f"Input:\n{input_content}\n\n")
+                    f.write(f"Output:\n{output_content}\n")
+                    f.write("=" * 50 + "\n\n")
+
     # ----- preview -----
     def refresh_preview(self):
         prefix = self._make_common_prefix_preview()
@@ -684,6 +819,12 @@ class App(tk.Tk):
         mode = self.mode.get()
         if mode == "Decode Escape Sequences":
             return "Decodes escape sequences (\\n → newline, \\t → tab, etc.)\nInput file will be decoded and saved to output."
+        if mode == "Batch Output → TXT/CSV":
+            fmt = self.batch_output_format.get()
+            if fmt == "CSV":
+                return "CSV Output Format:\n\nInput,Output\n\"What is...\",\"The answer is...\"\n\"How do...\",\"You can...\""
+            else:
+                return "TXT Output Format:\n\n=== Entry 1 ===\nInput:\n<user question>\n\nOutput:\n<assistant response>\n=================="
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
             if mode == "Batch Inference (CSV)" and self.include_params.get():
@@ -727,6 +868,8 @@ class App(tk.Tk):
                 return self._prev_ft_compl()
             if mode == "Docs → Batch Inference":
                 return self._prev_docs_batch()
+            if mode == "Batch Output → TXT/CSV":
+                return self._prev_batch_output()
             return self._prev_escape_decode()
         except Exception as e:
             return f"(preview error) {e}"
@@ -824,6 +967,79 @@ class App(tk.Tk):
             
             return (f"=== Original (with escape sequences) ===\n{original_preview}\n\n"
                    f"=== Decoded (readable format) ===\n{decoded_preview}")
+        except Exception as e:
+            return f"(preview error) {e}"
+
+    def _prev_batch_output(self):
+        batch_output_path = self.batch_output_input_path.get().strip()
+        if not batch_output_path: return "Choose a batch output JSONL file."
+        
+        try:
+            p = Path(batch_output_path)
+            if not p.is_file(): return "Batch output file not found."
+            
+            # Load original input if provided
+            original_input_path = self.batch_output_original_path.get().strip()
+            input_map = {}
+            if original_input_path and Path(original_input_path).is_file():
+                try:
+                    with open(original_input_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line: continue
+                            try:
+                                obj = json.loads(line)
+                                custom_id = obj.get("custom_id", "")
+                                messages = obj.get("body", {}).get("messages", [])
+                                user_content = ""
+                                for msg in messages:
+                                    if msg.get("role") == "user":
+                                        user_content = msg.get("content", "")
+                                        break
+                                if custom_id and user_content:
+                                    input_map[custom_id] = user_content
+                            except json.JSONDecodeError:
+                                continue
+                except Exception:
+                    pass
+            
+            # Parse batch output for preview
+            results = []
+            with open(batch_output_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line: continue
+                    try:
+                        obj = json.loads(line)
+                        custom_id = obj.get("custom_id", "")
+                        input_content = input_map.get(custom_id, custom_id)
+                        
+                        output_content = ""
+                        response = obj.get("response", {})
+                        if response:
+                            body = response.get("body", {})
+                            choices = body.get("choices", [])
+                            if choices and len(choices) > 0:
+                                message = choices[0].get("message", {})
+                                output_content = message.get("content", "")
+                        
+                        results.append((input_content, output_content))
+                        if len(results) >= PREVIEW_LINES:
+                            break
+                    except json.JSONDecodeError:
+                        continue
+            
+            if not results:
+                return "No valid results found in batch output file."
+            
+            out = []
+            for i, (input_content, output_content) in enumerate(results, 1):
+                out.append(f"=== Entry {i} ===")
+                out.append(f"Input: {input_content[:200]}{'...' if len(input_content) > 200 else ''}")
+                out.append(f"Output: {output_content[:200]}{'...' if len(output_content) > 200 else ''}")
+                out.append("---")
+            
+            return "\n".join(out)
         except Exception as e:
             return f"(preview error) {e}"
 
