@@ -37,6 +37,8 @@ except Exception:
 APP_TITLE = "🏎️ Batchin' Camaro"
 PREVIEW_LINES = 20
 DEFAULT_PREFIX = "request-"
+TXT_SEPARATOR_LENGTH = 50
+PREVIEW_TRUNCATE_LENGTH = 200
 
 MODES = [
     "Batch Inference (CSV)",
@@ -805,7 +807,7 @@ class App(tk.Tk):
                     f.write(f"=== Entry {i} ===\n")
                     f.write(f"Input:\n{input_content}\n\n")
                     f.write(f"Output:\n{output_content}\n")
-                    f.write("=" * 50 + "\n\n")
+                    f.write("=" * TXT_SEPARATOR_LENGTH + "\n\n")
 
     # ----- preview -----
     def refresh_preview(self):
@@ -1035,8 +1037,8 @@ class App(tk.Tk):
             out = []
             for i, (input_content, output_content) in enumerate(results, 1):
                 out.append(f"=== Entry {i} ===")
-                out.append(f"Input: {input_content[:200]}{'...' if len(input_content) > 200 else ''}")
-                out.append(f"Output: {output_content[:200]}{'...' if len(output_content) > 200 else ''}")
+                out.append(f"Input: {input_content[:PREVIEW_TRUNCATE_LENGTH]}{'...' if len(input_content) > PREVIEW_TRUNCATE_LENGTH else ''}")
+                out.append(f"Output: {output_content[:PREVIEW_TRUNCATE_LENGTH]}{'...' if len(output_content) > PREVIEW_TRUNCATE_LENGTH else ''}")
                 out.append("---")
             
             return "\n".join(out)
