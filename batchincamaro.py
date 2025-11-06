@@ -12,6 +12,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
 
+# Optional: pandas for JSON → Finetune mode
+try:
+    import pandas as pd
+except Exception:
+    pd = None
+
 # Optional readers (for Docs mode)
 try:
     from pdfminer.high_level import extract_text as pdf_extract_text
@@ -44,6 +50,7 @@ MODES = [
     "Finetune: Instruct",
     "Finetune: Completions",
     "Docs → Batch Inference",
+    "JSON → Finetune",
     "Decode Escape Sequences",
 ]
 
@@ -56,6 +63,7 @@ DEFAULT_PROMPTS = {
         "You are a helpful assistant. Use only the provided context to answer. "
         "If the answer isn't in the context, say you don't know."
     ),
+    "JSON → Finetune": "You are a helpful assistant.",
     "Decode Escape Sequences": "",
 }
 
@@ -259,6 +267,10 @@ class App(tk.Tk):
         # Escape sequence decoding
         self.escape_input_path = tk.StringVar()
         self.escape_output_path = tk.StringVar()
+        
+        # JSON → Finetune
+        self.batch_input_path = tk.StringVar()
+        self.batch_output_path = tk.StringVar()
 
         # Menu
         mbar = tk.Menu(self)
@@ -297,6 +309,10 @@ class App(tk.Tk):
         self.lbl_escape_input = ttk.Label(fr_paths, text="Input file:")
         self.ent_escape_input = ttk.Entry(fr_paths, textvariable=self.escape_input_path)
         self.btn_escape_input = ttk.Button(fr_paths, text="Open…", command=self.menu_open_escape_input, width=12)
+        # Batch input (JSON → Finetune)
+        self.lbl_batch_input = ttk.Label(fr_paths, text="Batch output file:")
+        self.ent_batch_input = ttk.Entry(fr_paths, textvariable=self.batch_input_path)
+        self.btn_batch_input = ttk.Button(fr_paths, text="Open…", command=self.menu_open_batch_input, width=12)
 
         ttk.Label(fr_paths, text="Output file:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_paths, textvariable=self.out_path).grid(row=3, column=1, sticky="we", padx=6, pady=6)
@@ -390,7 +406,8 @@ class App(tk.Tk):
     def layout_for_mode(self):
         for w in (self.lbl_in_csv, self.ent_in_csv, self.btn_in_csv,
                   self.lbl_docs, self.ent_docs, self.btn_docs,
-                  self.lbl_escape_input, self.ent_escape_input, self.btn_escape_input):
+                  self.lbl_escape_input, self.ent_escape_input, self.btn_escape_input,
+                  self.lbl_batch_input, self.ent_batch_input, self.btn_batch_input):
             try: w.grid_forget()
             except Exception: pass
 
@@ -403,6 +420,10 @@ class App(tk.Tk):
             self.lbl_escape_input.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_escape_input.grid(row=0, column=1, sticky="we", padx=6, pady=6)
             self.btn_escape_input.grid(row=0, column=2, padx=6, pady=6)
+        elif mode == "JSON → Finetune":
+            self.lbl_batch_input.grid(row=0, column=0, sticky="w", padx=6, pady=6)
+            self.ent_batch_input.grid(row=0, column=1, sticky="we", padx=6, pady=6)
+            self.btn_batch_input.grid(row=0, column=2, padx=6, pady=6)
         else:
             self.lbl_in_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_in_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
@@ -462,6 +483,11 @@ class App(tk.Tk):
         if not path: return
         self.escape_input_path.set(path); self.refresh_preview()
 
+    def menu_open_batch_input(self):
+        path = filedialog.askopenfilename(title="Select Batch Output JSONL", filetypes=[("JSONL files","*.jsonl"),("All files","*.*")])
+        if not path: return
+        self.batch_input_path.set(path); self.refresh_preview()
+
     def menu_save_output(self):
         mode = self.mode.get()
         if mode == "Decode Escape Sequences":
@@ -513,6 +539,8 @@ class App(tk.Tk):
                 self._build_escape_decode(out_path)
                 files_processed = 1; size = Path(out_path).stat().st_size
                 count = files_processed  # For consistency with other modes
+            elif mode == "JSON → Finetune":
+                count, size = self._build_json_to_finetune(out_path)
             else:
                 with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
                     if mode == "Batch Inference (CSV)":
@@ -672,6 +700,93 @@ class App(tk.Tk):
         
         Path(out_path).write_text(decoded, encoding="utf-8")
 
+    def _build_json_to_finetune(self, out_path):
+        """
+        Convert batch output JSONL to fine-tuning chat format.
+        Reads a batch output JSONL file, parses the model's JSON response,
+        and writes a new "Finetune: Chat" JSONL file.
+        """
+        input_path = self.batch_input_path.get().strip()
+        if not input_path: raise ValueError("Select a batch output file.")
+        
+        input_file = Path(input_path)
+        if not input_file.is_file(): raise ValueError("Batch output file not found.")
+        
+        system_prompt = self.txt_prompt.get("1.0", "end").strip()
+        
+        # Use pandas to read the batch output JSONL as per HBIC.md instructions
+        if pd is None:
+            raise ValueError("pandas is required for JSON → Finetune mode. Please install it with: pip install pandas")
+        
+        try:
+            df = pd.read_json(input_path, lines=True)
+        except Exception as e:
+            raise ValueError(f"Could not read input file '{input_path}'. Details: {e}\nPlease make sure the file exists and is a valid JSONL.")
+        
+        generated_chats = []
+        
+        # Iterate over each row from the batch output
+        for index, row in df.iterrows():
+            try:
+                # Extract the model's response content
+                # This path may change depending on your model provider (e.g., OpenAI, Anthropic)
+                # This example assumes an OpenAI-like structure
+                model_content = None
+                
+                if 'body' in row and isinstance(row['body'], dict) and 'choices' in row['body'] and row['body']['choices']:
+                    model_content = row['body']['choices'][0]['message']['content']
+                # Add other common formats as needed
+                elif 'response' in row and isinstance(row['response'], dict):
+                    if 'content' in row['response']:
+                        model_content = row['response']['content']
+                    elif 'message' in row['response'] and isinstance(row['response']['message'], dict):
+                        model_content = row['response']['message'].get('content')
+                
+                if model_content is None:
+                    print(f"Warning: Skipping row {index}, unexpected format or missing content.")
+                    continue
+                
+                # The model content itself is a JSON string. Parse it.
+                qa_pair = json.loads(model_content)
+                
+                if 'question' not in qa_pair or 'answer' not in qa_pair:
+                    print(f"Warning: Skipping row {index}, missing 'question' or 'answer' key.")
+                    continue
+                
+                # Format as a chat message list
+                messages = []
+                if system_prompt:
+                    messages.append({"role": "system", "content": system_prompt})
+                
+                messages.append({"role": "user", "content": qa_pair['question']})
+                messages.append({"role": "assistant", "content": qa_pair['answer']})
+                
+                generated_chats.append({"messages": messages})
+            
+            except json.JSONDecodeError:
+                print(f"Warning: Skipping row {index}, model output was not valid JSON.")
+            except Exception as e:
+                print(f"Warning: Skipping row {index} due to error: {e}")
+        
+        # Save the final chat data
+        if not generated_chats:
+            raise ValueError("No valid chat data was generated from the batch output.")
+        
+        # Use standard library to write the final JSONL
+        written = 0
+        size_bytes = 0
+        with open(out_path, 'w', encoding='utf-8') as f:
+            for chat in generated_chats:
+                line = json.dumps(chat, ensure_ascii=False)
+                f.write(line + '\n')
+                written += 1
+                size_bytes += len((line + '\n').encode('utf-8'))
+        
+        print(f"\nDone! Successfully converted {written} items.")
+        print(f"Final fine-tuning file is ready: {out_path}")
+        
+        return written, size_bytes
+
     # ----- preview -----
     def refresh_preview(self):
         prefix = self._make_common_prefix_preview()
@@ -684,6 +799,18 @@ class App(tk.Tk):
         mode = self.mode.get()
         if mode == "Decode Escape Sequences":
             return "Decodes escape sequences (\\n → newline, \\t → tab, etc.)\nInput file will be decoded and saved to output."
+        if mode == "JSON → Finetune":
+            sys_prompt = self.txt_prompt.get("1.0","end").strip()
+            return (
+                'Converts batch output JSONL to fine-tuning chat format.\n\n'
+                'Expected input format (batch output):\n'
+                '{ "body": { "choices": [{ "message": { "content": "{\\"question\\": \\"..\\", \\"answer\\": \\"..\\"}" }}]}}\n\n'
+                'Output format (fine-tuning chat):\n'
+                '{ "messages": [\n'
+                f'  {{"role": "system", "content": "{sys_prompt}"}},\n'
+                '  {"role": "user", "content": "<question>"},\n'
+                '  {"role": "assistant", "content": "<answer>"}\n]}'
+            )
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
             if mode == "Batch Inference (CSV)" and self.include_params.get():
@@ -727,6 +854,8 @@ class App(tk.Tk):
                 return self._prev_ft_compl()
             if mode == "Docs → Batch Inference":
                 return self._prev_docs_batch()
+            if mode == "JSON → Finetune":
+                return self._prev_json_to_finetune()
             return self._prev_escape_decode()
         except Exception as e:
             return f"(preview error) {e}"
@@ -824,6 +953,68 @@ class App(tk.Tk):
             
             return (f"=== Original (with escape sequences) ===\n{original_preview}\n\n"
                    f"=== Decoded (readable format) ===\n{decoded_preview}")
+        except Exception as e:
+            return f"(preview error) {e}"
+
+    def _prev_json_to_finetune(self):
+        input_path = self.batch_input_path.get().strip()
+        if not input_path: return "Choose a batch output file."
+        
+        if pd is None:
+            return "pandas is required for JSON → Finetune mode. Please install it with: pip install pandas"
+        
+        try:
+            p = Path(input_path)
+            if not p.is_file(): return "Batch output file not found."
+            
+            # Read the batch output JSONL
+            df = pd.read_json(input_path, lines=True)
+            
+            out = []
+            n = 0
+            system_prompt = self.txt_prompt.get("1.0", "end").strip()
+            
+            # Preview first few valid conversions
+            for index, row in df.iterrows():
+                try:
+                    # Extract the model's response content
+                    model_content = None
+                    
+                    if 'body' in row and isinstance(row['body'], dict) and 'choices' in row['body'] and row['body']['choices']:
+                        model_content = row['body']['choices'][0]['message']['content']
+                    elif 'response' in row and isinstance(row['response'], dict):
+                        if 'content' in row['response']:
+                            model_content = row['response']['content']
+                        elif 'message' in row['response'] and isinstance(row['response']['message'], dict):
+                            model_content = row['response']['message'].get('content')
+                    
+                    if model_content is None:
+                        continue
+                    
+                    # Parse the model content as JSON
+                    qa_pair = json.loads(model_content)
+                    
+                    if 'question' not in qa_pair or 'answer' not in qa_pair:
+                        continue
+                    
+                    # Format preview
+                    question = qa_pair['question'][:200] + ("..." if len(qa_pair['question']) > 200 else "")
+                    answer = qa_pair['answer'][:200] + ("..." if len(qa_pair['answer']) > 200 else "")
+                    
+                    out.append(f"[Item {n+1}]\nQuestion: {question}\nAnswer: {answer}\n---")
+                    n += 1
+                    
+                    if n >= PREVIEW_LINES:
+                        break
+                
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    continue
+            
+            if not out:
+                return "(no valid Q&A pairs found in batch output)"
+            
+            return "\n".join(out)
+        
         except Exception as e:
             return f"(preview error) {e}"
 
