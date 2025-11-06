@@ -716,7 +716,7 @@ class App(tk.Tk):
         
         # Use pandas to read the batch output JSONL as per HBIC.md instructions
         if pd is None:
-            raise ValueError("pandas is required for JSON → Finetune mode. Install dependencies from requirements.txt")
+            raise ValueError("pandas is required for JSON → Finetune mode. Run: pip install -r requirements.txt")
         
         try:
             df = pd.read_json(input_path, lines=True)
@@ -788,9 +788,6 @@ class App(tk.Tk):
                 f.write(line + '\n')
                 written += 1
                 size_bytes += len((line + '\n').encode('utf-8'))
-        
-        print(f"\nDone! Successfully converted {written} items.")
-        print(f"Final fine-tuning file is ready: {out_path}")
         
         return written, size_bytes
 
@@ -968,7 +965,7 @@ class App(tk.Tk):
         if not input_path: return "Choose a batch output file."
         
         if pd is None:
-            return "pandas is required for JSON → Finetune mode. Install dependencies from requirements.txt"
+            return "pandas is required for JSON → Finetune mode. Run: pip install -r requirements.txt"
         
         try:
             p = Path(input_path)
