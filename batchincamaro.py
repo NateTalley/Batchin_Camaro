@@ -15,7 +15,7 @@ from tkinter import ttk, filedialog, messagebox
 # Optional: pandas for JSON → Finetune mode
 try:
     import pandas as pd
-except Exception:
+except ImportError:
     pd = None
 
 # Optional readers (for Docs mode)
@@ -716,7 +716,7 @@ class App(tk.Tk):
         
         # Use pandas to read the batch output JSONL as per HBIC.md instructions
         if pd is None:
-            raise ValueError("pandas is required for JSON → Finetune mode. Please install it with: pip install pandas")
+            raise ValueError("pandas is required for JSON → Finetune mode. Please install dependencies: pip install -r requirements.txt")
         
         try:
             df = pd.read_json(input_path, lines=True)
@@ -729,8 +729,11 @@ class App(tk.Tk):
         for index, row in df.iterrows():
             try:
                 # Extract the model's response content
-                # This path may change depending on your model provider (e.g., OpenAI, Anthropic)
-                # This example assumes an OpenAI-like structure
+                # Supports multiple formats:
+                # 1. OpenAI Batch API format: body.choices[0].message.content
+                # 2. Generic response format: response.content
+                # 3. Nested message format: response.message.content
+                # Add additional format handlers below as needed for other providers
                 model_content = None
                 
                 if 'body' in row and isinstance(row['body'], dict) and 'choices' in row['body'] and row['body']['choices']:
@@ -743,14 +746,14 @@ class App(tk.Tk):
                         model_content = row['response']['message'].get('content')
                 
                 if model_content is None:
-                    print(f"Warning: Skipping row {index}, unexpected format or missing content.")
+                    # Silently skip rows with unexpected formats
                     continue
                 
                 # The model content itself is a JSON string. Parse it.
                 qa_pair = json.loads(model_content)
                 
                 if 'question' not in qa_pair or 'answer' not in qa_pair:
-                    print(f"Warning: Skipping row {index}, missing 'question' or 'answer' key.")
+                    # Silently skip rows missing required keys
                     continue
                 
                 # Format as a chat message list
@@ -764,9 +767,11 @@ class App(tk.Tk):
                 generated_chats.append({"messages": messages})
             
             except json.JSONDecodeError:
-                print(f"Warning: Skipping row {index}, model output was not valid JSON.")
-            except Exception as e:
-                print(f"Warning: Skipping row {index} due to error: {e}")
+                # Silently skip rows with invalid JSON in model content
+                pass
+            except Exception:
+                # Silently skip rows with other errors
+                pass
         
         # Save the final chat data
         if not generated_chats:
@@ -961,7 +966,7 @@ class App(tk.Tk):
         if not input_path: return "Choose a batch output file."
         
         if pd is None:
-            return "pandas is required for JSON → Finetune mode. Please install it with: pip install pandas"
+            return "pandas is required for JSON → Finetune mode. Please install dependencies: pip install -r requirements.txt"
         
         try:
             p = Path(input_path)
