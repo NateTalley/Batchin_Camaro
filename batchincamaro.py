@@ -721,7 +721,7 @@ class App(tk.Tk):
         try:
             df = pd.read_json(input_path, lines=True)
         except Exception as e:
-            raise ValueError(f"Could not read input file '{input_path}'. Details: {e}\nPlease make sure the file exists and is a valid JSONL.")
+            raise ValueError(f"Could not read input file '{input_path}'. Details: {e}\nPlease ensure the file is a valid JSONL.")
         
         generated_chats = []
         
@@ -771,8 +771,8 @@ class App(tk.Tk):
             except json.JSONDecodeError:
                 # Silently skip rows with invalid JSON in model content
                 pass
-            except Exception:
-                # Silently skip rows with other errors
+            except (TypeError, KeyError, AttributeError):
+                # Silently skip rows with data structure errors
                 pass
         
         # Save the final chat data
