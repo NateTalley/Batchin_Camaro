@@ -716,7 +716,7 @@ class App(tk.Tk):
         
         # Use pandas to read the batch output JSONL as per HBIC.md instructions
         if pd is None:
-            raise ValueError("pandas is required for JSON → Finetune mode. Please install dependencies: pip install -r requirements.txt")
+            raise ValueError("pandas is required for JSON → Finetune mode. Install dependencies from requirements.txt")
         
         try:
             df = pd.read_json(input_path, lines=True)
@@ -736,8 +736,10 @@ class App(tk.Tk):
                 # Add additional format handlers below as needed for other providers
                 model_content = None
                 
-                if 'body' in row and isinstance(row['body'], dict) and 'choices' in row['body'] and row['body']['choices']:
-                    model_content = row['body']['choices'][0]['message']['content']
+                if 'body' in row and isinstance(row['body'], dict) and 'choices' in row['body']:
+                    choices = row['body']['choices']
+                    if isinstance(choices, list) and len(choices) > 0 and 'message' in choices[0]:
+                        model_content = choices[0]['message'].get('content')
                 # Add other common formats as needed
                 elif 'response' in row and isinstance(row['response'], dict):
                     if 'content' in row['response']:
@@ -966,7 +968,7 @@ class App(tk.Tk):
         if not input_path: return "Choose a batch output file."
         
         if pd is None:
-            return "pandas is required for JSON → Finetune mode. Please install dependencies: pip install -r requirements.txt"
+            return "pandas is required for JSON → Finetune mode. Install dependencies from requirements.txt"
         
         try:
             p = Path(input_path)
@@ -985,8 +987,10 @@ class App(tk.Tk):
                     # Extract the model's response content
                     model_content = None
                     
-                    if 'body' in row and isinstance(row['body'], dict) and 'choices' in row['body'] and row['body']['choices']:
-                        model_content = row['body']['choices'][0]['message']['content']
+                    if 'body' in row and isinstance(row['body'], dict) and 'choices' in row['body']:
+                        choices = row['body']['choices']
+                        if isinstance(choices, list) and len(choices) > 0 and 'message' in choices[0]:
+                            model_content = choices[0]['message'].get('content')
                     elif 'response' in row and isinstance(row['response'], dict):
                         if 'content' in row['response']:
                             model_content = row['response']['content']
