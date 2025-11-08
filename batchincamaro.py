@@ -33,6 +33,10 @@ try:
     import pytesseract
 except Exception:
     pytesseract = None
+try:
+    import internetarchive
+except Exception:
+    internetarchive = None
 
 APP_TITLE = "🏎️ Batchin' Camaro"
 PREVIEW_LINES = 20
@@ -48,6 +52,7 @@ MODES = [
     "Docs → Batch Inference",
     "Decode Escape Sequences",
     "Batch Output → TXT/CSV",
+    "Internet Archive Download",
 ]
 
 DEFAULT_PROMPTS = {
@@ -61,6 +66,7 @@ DEFAULT_PROMPTS = {
     ),
     "Decode Escape Sequences": "",
     "Batch Output → TXT/CSV": "",
+    "Internet Archive Download": "",
 }
 
 SUPPORTED_SUFFIXES = {".txt", ".md", ".rst", ".text", ".pdf", ".docx", ".rtf", ".csv"}
@@ -269,6 +275,12 @@ class App(tk.Tk):
         self.batch_output_original_path = tk.StringVar()
         self.batch_output_format = tk.StringVar(value="CSV")
 
+        # Internet Archive download
+        self.ia_item_id = tk.StringVar()
+        self.ia_output_dir = tk.StringVar()
+        self.ia_format = tk.StringVar(value="Both")
+        self.ia_delay = tk.DoubleVar(value=1.5)
+
         # Menu
         mbar = tk.Menu(self)
         filem = tk.Menu(mbar, tearoff=0)
@@ -316,6 +328,15 @@ class App(tk.Tk):
         self.ent_batch_output_original = ttk.Entry(fr_paths, textvariable=self.batch_output_original_path)
         self.btn_batch_output_original = ttk.Button(fr_paths, text="Open…", command=self.menu_open_batch_original, width=12)
 
+        # Internet Archive download
+        self.lbl_ia_item = ttk.Label(fr_paths, text="Item identifier:")
+        self.ent_ia_item = ttk.Entry(fr_paths, textvariable=self.ia_item_id)
+        self.btn_ia_preview = ttk.Button(fr_paths, text="Preview", command=self.refresh_preview, width=12)
+        
+        self.lbl_ia_output = ttk.Label(fr_paths, text="Output directory:")
+        self.ent_ia_output = ttk.Entry(fr_paths, textvariable=self.ia_output_dir)
+        self.btn_ia_output = ttk.Button(fr_paths, text="Browse…", command=self.browse_ia_output, width=12)
+
         ttk.Label(fr_paths, text="Output file:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_paths, textvariable=self.out_path).grid(row=3, column=1, sticky="we", padx=6, pady=6)
         ttk.Button(fr_paths, text="Save As…", command=self.menu_save_output, width=12).grid(row=3, column=2, padx=6, pady=6)
@@ -344,6 +365,16 @@ class App(tk.Tk):
         ttk.Radiobutton(fr_batch_output, text="CSV", variable=self.batch_output_format, value="CSV", command=self.refresh_preview).grid(row=0, column=1, sticky="w", padx=6, pady=6)
         ttk.Radiobutton(fr_batch_output, text="TXT", variable=self.batch_output_format, value="TXT", command=self.refresh_preview).grid(row=0, column=2, sticky="w", padx=6, pady=6)
         ttk.Label(fr_batch_output, text="CSV: Two columns (Input, Output) | TXT: Plain text with separators").grid(row=1, column=0, columnspan=3, sticky="w", padx=6, pady=6)
+
+        # Internet Archive settings
+        fr_ia = ttk.LabelFrame(left, text="Internet Archive Settings"); fr_ia.pack(fill="x", padx=10, pady=8)
+        ttk.Label(fr_ia, text="File format:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_ia, text="Text", variable=self.ia_format, value="Text", command=self.refresh_preview).grid(row=0, column=1, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_ia, text="PDF", variable=self.ia_format, value="PDF", command=self.refresh_preview).grid(row=0, column=2, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_ia, text="Both", variable=self.ia_format, value="Both", command=self.refresh_preview).grid(row=0, column=3, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="Delay between downloads (seconds):").grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_ia, textvariable=self.ia_delay, width=10).grid(row=1, column=1, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="Recommended: 1-2 seconds to avoid rate limiting").grid(row=1, column=2, columnspan=2, sticky="w", padx=6, pady=6)
 
         # Docs chunking
         fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); fr_docs.pack(fill="x", padx=10, pady=8)
@@ -417,7 +448,9 @@ class App(tk.Tk):
                   self.lbl_docs, self.ent_docs, self.btn_docs,
                   self.lbl_escape_input, self.ent_escape_input, self.btn_escape_input,
                   self.lbl_batch_output_input, self.ent_batch_output_input, self.btn_batch_output_input,
-                  self.lbl_batch_output_original, self.ent_batch_output_original, self.btn_batch_output_original):
+                  self.lbl_batch_output_original, self.ent_batch_output_original, self.btn_batch_output_original,
+                  self.lbl_ia_item, self.ent_ia_item, self.btn_ia_preview,
+                  self.lbl_ia_output, self.ent_ia_output, self.btn_ia_output):
             try: w.grid_forget()
             except Exception: pass
 
@@ -437,6 +470,13 @@ class App(tk.Tk):
             self.lbl_batch_output_original.grid(row=1, column=0, sticky="w", padx=6, pady=6)
             self.ent_batch_output_original.grid(row=1, column=1, sticky="we", padx=6, pady=6)
             self.btn_batch_output_original.grid(row=1, column=2, padx=6, pady=6)
+        elif mode == "Internet Archive Download":
+            self.lbl_ia_item.grid(row=0, column=0, sticky="w", padx=6, pady=6)
+            self.ent_ia_item.grid(row=0, column=1, sticky="we", padx=6, pady=6)
+            self.btn_ia_preview.grid(row=0, column=2, padx=6, pady=6)
+            self.lbl_ia_output.grid(row=1, column=0, sticky="w", padx=6, pady=6)
+            self.ent_ia_output.grid(row=1, column=1, sticky="we", padx=6, pady=6)
+            self.btn_ia_output.grid(row=1, column=2, padx=6, pady=6)
         else:
             self.lbl_in_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
             self.ent_in_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
@@ -471,6 +511,7 @@ class App(tk.Tk):
         self._set_group_state("Docs Chunking", "normal" if mode=="Docs → Batch Inference" else "disabled")
         self._set_group_state("Escape Sequence Decoding", "normal" if mode=="Decode Escape Sequences" else "disabled")
         self._set_group_state("Batch Output Format", "normal" if mode=="Batch Output → TXT/CSV" else "disabled")
+        self._set_group_state("Internet Archive Settings", "normal" if mode=="Internet Archive Download" else "disabled")
 
     def _set_group_state(self, group_title: str, state: str):
         for child in self._children_of_label_frame(group_title):
@@ -529,6 +570,10 @@ class App(tk.Tk):
         path = filedialog.askdirectory(title="Select documents folder")
         if path: self.docs_dir.set(path); self.refresh_preview()
 
+    def browse_ia_output(self):
+        path = filedialog.askdirectory(title="Select output directory for Internet Archive downloads")
+        if path: self.ia_output_dir.set(path); self.refresh_preview()
+
     # ----- CSV loading -----
     def load_csv(self, path):
         try:
@@ -569,6 +614,12 @@ class App(tk.Tk):
                 self._build_batch_output(out_path)
                 size = Path(out_path).stat().st_size
                 count = 1  # For consistency with other modes
+            elif mode == "Internet Archive Download":
+                count = self._build_ia_download()
+                # For IA downloads, we don't need to check size or out_path
+                messagebox.showinfo("Done", f"Downloaded {count} files to:\n{self.ia_output_dir.get()}")
+                self.status.set(f"Finished: {count} files downloaded")
+                return
             else:
                 with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
                     if mode == "Batch Inference (CSV)":
@@ -597,12 +648,15 @@ class App(tk.Tk):
         self.status.set(f"Finished: {count} → {os.path.basename(out_path)}")
 
     def _ensure_out_path(self):
+        mode = self.mode.get()
+        # Internet Archive mode doesn't use out_path
+        if mode == "Internet Archive Download":
+            return None
         out_path = self.out_path.get().strip()
         if not out_path:
             self.menu_save_output(); out_path = self.out_path.get().strip()
             if not out_path: return None
         if Path(out_path).suffix == "":
-            mode = self.mode.get()
             if mode == "Decode Escape Sequences":
                 out_path += ".txt"
             elif mode == "Batch Output → TXT/CSV":
@@ -809,6 +863,97 @@ class App(tk.Tk):
                     f.write(f"Output:\n{output_content}\n")
                     f.write("=" * TXT_SEPARATOR_LENGTH + "\n\n")
 
+    def _build_ia_download(self) -> int:
+        """Download text files or PDFs from Internet Archive."""
+        if internetarchive is None:
+            raise ValueError("internetarchive library not available. Install with: pip install internetarchive")
+        
+        item_id = self.ia_item_id.get().strip()
+        if not item_id:
+            raise ValueError("Enter an Internet Archive item identifier.")
+        
+        output_dir = self.ia_output_dir.get().strip()
+        if not output_dir:
+            raise ValueError("Select an output directory.")
+        
+        output_path = Path(output_dir)
+        if not output_path.exists():
+            output_path.mkdir(parents=True, exist_ok=True)
+        
+        # Get the item
+        try:
+            item = internetarchive.get_item(item_id)
+        except Exception as e:
+            raise ValueError(f"Failed to get item '{item_id}': {e}")
+        
+        # Determine which formats to download
+        format_choice = self.ia_format.get()
+        formats_to_download = []
+        if format_choice == "Text":
+            formats_to_download = ["Text"]
+        elif format_choice == "PDF":
+            formats_to_download = ["PDF"]
+        else:  # Both
+            formats_to_download = ["Text", "PDF"]
+        
+        # Get delay between downloads
+        delay = self.ia_delay.get()
+        if delay < 0:
+            delay = 1.5
+        
+        # Download files with rate limiting
+        import time
+        downloaded_count = 0
+        
+        # List all files in the item
+        files = list(item.files)
+        if not files:
+            raise ValueError(f"No files found for item '{item_id}'")
+        
+        # Filter files based on format choice
+        files_to_download = []
+        for file in files:
+            file_format = file.get('format', '')
+            file_name = file.get('name', '')
+            
+            # Check if this is a text or PDF file
+            if format_choice == "Text" or format_choice == "Both":
+                if file_format == "Text" or file_name.endswith('.txt'):
+                    files_to_download.append(file)
+            
+            if format_choice == "PDF" or format_choice == "Both":
+                if file_format == "PDF" or file_name.endswith('.pdf'):
+                    # Avoid duplicates
+                    if file not in files_to_download:
+                        files_to_download.append(file)
+        
+        if not files_to_download:
+            raise ValueError(f"No {format_choice.lower()} files found for item '{item_id}'")
+        
+        # Download each file with rate limiting
+        for file in files_to_download:
+            file_name = file.get('name', '')
+            try:
+                # Download the file
+                file_obj = item.get_file(file_name)
+                output_file_path = output_path / file_name
+                file_obj.download(file_path=str(output_file_path))
+                downloaded_count += 1
+                
+                # Update status
+                self.status.set(f"Downloaded {downloaded_count}/{len(files_to_download)}: {file_name}")
+                self.update_idletasks()
+                
+                # Rate limiting: wait between downloads
+                if downloaded_count < len(files_to_download):
+                    time.sleep(delay)
+            except Exception as e:
+                # Log error but continue with other files
+                print(f"Error downloading {file_name}: {e}")
+                continue
+        
+        return downloaded_count
+
     # ----- preview -----
     def refresh_preview(self):
         prefix = self._make_common_prefix_preview()
@@ -827,6 +972,9 @@ class App(tk.Tk):
                 return "CSV Output Format:\n\nInput,Output\n\"What is...\",\"The answer is...\"\n\"How do...\",\"You can...\""
             else:
                 return "TXT Output Format:\n\n=== Entry 1 ===\nInput:\n<user question>\n\nOutput:\n<assistant response>\n=================="
+        if mode == "Internet Archive Download":
+            fmt = self.ia_format.get()
+            return f"Internet Archive Download Mode\n\nFormat: {fmt}\nDelay: {self.ia_delay.get()}s between downloads\n\nFiles will be downloaded to the output directory with rate limiting."
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
             if mode == "Batch Inference (CSV)" and self.include_params.get():
@@ -872,6 +1020,8 @@ class App(tk.Tk):
                 return self._prev_docs_batch()
             if mode == "Batch Output → TXT/CSV":
                 return self._prev_batch_output()
+            if mode == "Internet Archive Download":
+                return self._prev_ia_download()
             return self._prev_escape_decode()
         except Exception as e:
             return f"(preview error) {e}"
@@ -1044,6 +1194,72 @@ class App(tk.Tk):
             return "\n".join(out)
         except Exception as e:
             return f"(preview error) {e}"
+
+    def _prev_ia_download(self):
+        """Preview available files for Internet Archive item."""
+        if internetarchive is None:
+            return "Internet Archive library not available. Install with: pip install internetarchive"
+        
+        item_id = self.ia_item_id.get().strip()
+        if not item_id:
+            return "Enter an Internet Archive item identifier to preview available files."
+        
+        output_dir = self.ia_output_dir.get().strip()
+        if not output_dir:
+            return "Select an output directory."
+        
+        try:
+            # Get the item
+            item = internetarchive.get_item(item_id)
+            
+            # Get format choice
+            format_choice = self.ia_format.get()
+            
+            # List files
+            files = list(item.files)
+            if not files:
+                return f"No files found for item '{item_id}'"
+            
+            # Filter and display files
+            out = []
+            out.append(f"Item: {item_id}")
+            out.append(f"Title: {item.metadata.get('title', 'N/A')}")
+            out.append(f"Format filter: {format_choice}")
+            out.append(f"Output directory: {output_dir}")
+            out.append("\nAvailable files to download:")
+            out.append("=" * 50)
+            
+            count = 0
+            for file in files:
+                file_format = file.get('format', '')
+                file_name = file.get('name', '')
+                file_size = file.get('size', 0)
+                
+                # Check if this file matches the format filter
+                should_include = False
+                if format_choice == "Text" or format_choice == "Both":
+                    if file_format == "Text" or file_name.endswith('.txt'):
+                        should_include = True
+                
+                if format_choice == "PDF" or format_choice == "Both":
+                    if file_format == "PDF" or file_name.endswith('.pdf'):
+                        should_include = True
+                
+                if should_include:
+                    size_mb = int(file_size) / (1024 * 1024) if file_size else 0
+                    out.append(f"{count + 1}. {file_name} ({file_format}, {size_mb:.2f} MB)")
+                    count += 1
+                    if count >= PREVIEW_LINES:
+                        break
+            
+            if count == 0:
+                out.append(f"No {format_choice.lower()} files found.")
+            else:
+                out.append(f"\nTotal files to download: {count}")
+            
+            return "\n".join(out)
+        except Exception as e:
+            return f"Error accessing item: {e}"
 
     # ----- helpers -----
     @staticmethod
