@@ -188,15 +188,18 @@ def extract_ia_item_id(url_or_id: str) -> str:
     """
     url_or_id = url_or_id.strip()
     
-    # Check if it's a URL
-    if 'archive.org' in url_or_id.lower():
-        # Extract the part after /details/
-        match = re.search(r'/details/([^/?&#]+)', url_or_id)
-        if match:
-            return match.group(1)
+    # Check if it's a valid Internet Archive URL
+    # Must start with archive.org (with optional protocol) or be just an ID
+    match = re.search(r'(?:^|https?://|www\.)archive\.org/details/([^/?&#]+)', url_or_id, re.IGNORECASE)
+    if match:
+        return match.group(1)
     
-    # If not a URL, assume it's already an item ID
-    return url_or_id
+    # If not a URL, assume it's already an item ID (no slashes or special URL characters)
+    if '/' not in url_or_id and '?' not in url_or_id and '&' not in url_or_id:
+        return url_or_id
+    
+    # If it contains URL components but isn't a valid archive.org URL, return empty string
+    return ""
 
 # ------------------ Escape sequence decoding ------------------
 def decode_escape_sequences(text: str) -> str:
@@ -1015,7 +1018,10 @@ class App(tk.Tk):
             item_id = self.ia_item_id.get().strip()
             if not item_id:
                 raise ValueError("Enter an Internet Archive item identifier.")
-            item_ids = [extract_ia_item_id(item_id)]
+            item_id = extract_ia_item_id(item_id)
+            if not item_id:
+                raise ValueError("Invalid Internet Archive URL or item identifier.")
+            item_ids = [item_id]
         
         # Determine which formats to download
         format_choice = self.ia_format.get()
