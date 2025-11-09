@@ -37,6 +37,10 @@ try:
     import internetarchive
 except Exception:
     internetarchive = None
+try:
+    from bs4 import BeautifulSoup
+except Exception:
+    BeautifulSoup = None
 
 APP_TITLE = "🏎️ Batchin' Camaro"
 PREVIEW_LINES = 20
@@ -146,6 +150,53 @@ def iter_text_files(root: Path, suffixes) -> list[Path]:
         if p.is_file() and p.suffix.lower() in suffixes:
             out.append(p)
     return out
+
+# ------------------ HTML parsing ------------------
+def parse_html_to_text(html_content: str) -> str:
+    """
+    Parse HTML content and extract clean text.
+    Handles .txt files that are actually HTML.
+    """
+    if BeautifulSoup is None:
+        # Fallback: simple tag stripping if BeautifulSoup not available
+        return re.sub(r'<[^>]+>', ' ', html_content)
+    
+    try:
+        soup = BeautifulSoup(html_content, 'html.parser')
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+        # Get text
+        text = soup.get_text()
+        # Break into lines and remove leading/trailing space
+        lines = (line.strip() for line in text.splitlines())
+        # Break multi-headlines into a line each
+        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+        # Drop blank lines
+        text = '\n'.join(chunk for chunk in chunks if chunk)
+        return text
+    except Exception:
+        # Fallback to simple tag stripping
+        return re.sub(r'<[^>]+>', ' ', html_content)
+
+def extract_ia_item_id(url_or_id: str) -> str:
+    """
+    Extract Internet Archive item ID from a URL or return the ID if already extracted.
+    Examples:
+    - https://archive.org/details/LaurelCanyonHistory_201810 -> LaurelCanyonHistory_201810
+    - LaurelCanyonHistory_201810 -> LaurelCanyonHistory_201810
+    """
+    url_or_id = url_or_id.strip()
+    
+    # Check if it's a URL
+    if 'archive.org' in url_or_id.lower():
+        # Extract the part after /details/
+        match = re.search(r'/details/([^/?&#]+)', url_or_id)
+        if match:
+            return match.group(1)
+    
+    # If not a URL, assume it's already an item ID
+    return url_or_id
 
 # ------------------ Escape sequence decoding ------------------
 def decode_escape_sequences(text: str) -> str:
@@ -277,9 +328,14 @@ class App(tk.Tk):
 
         # Internet Archive download
         self.ia_item_id = tk.StringVar()
+        self.ia_csv_path = tk.StringVar()
+        self.ia_csv_column = tk.StringVar()
         self.ia_output_dir = tk.StringVar()
         self.ia_format = tk.StringVar(value="Both")
         self.ia_delay = tk.DoubleVar(value=1.5)
+        self.ia_use_csv = tk.BooleanVar(value=False)
+        self.ia_create_subdirs = tk.BooleanVar(value=True)
+        self.ia_parse_html = tk.BooleanVar(value=True)
 
         # Menu
         mbar = tk.Menu(self)
@@ -333,6 +389,10 @@ class App(tk.Tk):
         self.ent_ia_item = ttk.Entry(fr_paths, textvariable=self.ia_item_id)
         self.btn_ia_preview = ttk.Button(fr_paths, text="Preview", command=self.refresh_preview, width=12)
         
+        self.lbl_ia_csv = ttk.Label(fr_paths, text="CSV with links:")
+        self.ent_ia_csv = ttk.Entry(fr_paths, textvariable=self.ia_csv_path)
+        self.btn_ia_csv = ttk.Button(fr_paths, text="Open…", command=self.menu_open_ia_csv, width=12)
+        
         self.lbl_ia_output = ttk.Label(fr_paths, text="Output directory:")
         self.ent_ia_output = ttk.Entry(fr_paths, textvariable=self.ia_output_dir)
         self.btn_ia_output = ttk.Button(fr_paths, text="Browse…", command=self.browse_ia_output, width=12)
@@ -368,13 +428,22 @@ class App(tk.Tk):
 
         # Internet Archive settings
         fr_ia = ttk.LabelFrame(left, text="Internet Archive Settings"); fr_ia.pack(fill="x", padx=10, pady=8)
-        ttk.Label(fr_ia, text="File format:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Radiobutton(fr_ia, text="Text", variable=self.ia_format, value="Text", command=self.refresh_preview).grid(row=0, column=1, sticky="w", padx=6, pady=6)
-        ttk.Radiobutton(fr_ia, text="PDF", variable=self.ia_format, value="PDF", command=self.refresh_preview).grid(row=0, column=2, sticky="w", padx=6, pady=6)
-        ttk.Radiobutton(fr_ia, text="Both", variable=self.ia_format, value="Both", command=self.refresh_preview).grid(row=0, column=3, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_ia, text="Delay between downloads (seconds):").grid(row=1, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_ia, textvariable=self.ia_delay, width=10).grid(row=1, column=1, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_ia, text="Recommended: 1-2 seconds to avoid rate limiting").grid(row=1, column=2, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(fr_ia, text="Use CSV with links", variable=self.ia_use_csv, command=self.on_ia_csv_toggle).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="Link column (if using CSV):").grid(row=0, column=2, sticky="w", padx=6, pady=6)
+        self.cb_ia_csv_column = ttk.Combobox(fr_ia, textvariable=self.ia_csv_column)
+        self.cb_ia_csv_column.grid(row=0, column=3, sticky="we", padx=6, pady=6)
+        
+        ttk.Label(fr_ia, text="File format:").grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_ia, text="Text", variable=self.ia_format, value="Text", command=self.refresh_preview).grid(row=1, column=1, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_ia, text="PDF", variable=self.ia_format, value="PDF", command=self.refresh_preview).grid(row=1, column=2, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_ia, text="Both", variable=self.ia_format, value="Both", command=self.refresh_preview).grid(row=1, column=3, sticky="w", padx=6, pady=6)
+        
+        ttk.Label(fr_ia, text="Delay between downloads (seconds):").grid(row=2, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_ia, textvariable=self.ia_delay, width=10).grid(row=2, column=1, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="Recommended: 1-2 seconds to avoid rate limiting").grid(row=2, column=2, columnspan=2, sticky="w", padx=6, pady=6)
+        
+        ttk.Checkbutton(fr_ia, text="Create subdirectory for each item", variable=self.ia_create_subdirs).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(fr_ia, text="Parse HTML in .txt files", variable=self.ia_parse_html).grid(row=3, column=2, columnspan=2, sticky="w", padx=6, pady=6)
 
         # Docs chunking
         fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); fr_docs.pack(fill="x", padx=10, pady=8)
@@ -450,6 +519,7 @@ class App(tk.Tk):
                   self.lbl_batch_output_input, self.ent_batch_output_input, self.btn_batch_output_input,
                   self.lbl_batch_output_original, self.ent_batch_output_original, self.btn_batch_output_original,
                   self.lbl_ia_item, self.ent_ia_item, self.btn_ia_preview,
+                  self.lbl_ia_csv, self.ent_ia_csv, self.btn_ia_csv,
                   self.lbl_ia_output, self.ent_ia_output, self.btn_ia_output):
             try: w.grid_forget()
             except Exception: pass
@@ -471,9 +541,15 @@ class App(tk.Tk):
             self.ent_batch_output_original.grid(row=1, column=1, sticky="we", padx=6, pady=6)
             self.btn_batch_output_original.grid(row=1, column=2, padx=6, pady=6)
         elif mode == "Internet Archive Download":
-            self.lbl_ia_item.grid(row=0, column=0, sticky="w", padx=6, pady=6)
-            self.ent_ia_item.grid(row=0, column=1, sticky="we", padx=6, pady=6)
-            self.btn_ia_preview.grid(row=0, column=2, padx=6, pady=6)
+            # Show item ID or CSV based on checkbox state
+            if self.ia_use_csv.get():
+                self.lbl_ia_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
+                self.ent_ia_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
+                self.btn_ia_csv.grid(row=0, column=2, padx=6, pady=6)
+            else:
+                self.lbl_ia_item.grid(row=0, column=0, sticky="w", padx=6, pady=6)
+                self.ent_ia_item.grid(row=0, column=1, sticky="we", padx=6, pady=6)
+                self.btn_ia_preview.grid(row=0, column=2, padx=6, pady=6)
             self.lbl_ia_output.grid(row=1, column=0, sticky="w", padx=6, pady=6)
             self.ent_ia_output.grid(row=1, column=1, sticky="we", padx=6, pady=6)
             self.btn_ia_output.grid(row=1, column=2, padx=6, pady=6)
@@ -573,6 +649,32 @@ class App(tk.Tk):
     def browse_ia_output(self):
         path = filedialog.askdirectory(title="Select output directory for Internet Archive downloads")
         if path: self.ia_output_dir.set(path); self.refresh_preview()
+
+    def menu_open_ia_csv(self):
+        path = filedialog.askopenfilename(title="Select CSV with Internet Archive links", filetypes=[("CSV files","*.csv"),("All files","*.*")])
+        if not path: return
+        self.ia_csv_path.set(path)
+        # Load CSV to get column names
+        try:
+            with open(path, "r", encoding="utf-8-sig", newline="") as f:
+                reader = csv.DictReader(f)
+                headers = reader.fieldnames or []
+            if headers:
+                self.cb_ia_csv_column.configure(values=headers)
+                # Try to guess the link column
+                link_col = self._guess_link_col(headers)
+                if link_col:
+                    self.ia_csv_column.set(link_col)
+                elif headers:
+                    self.ia_csv_column.set(headers[0])
+        except Exception as e:
+            messagebox.showerror("CSV Error", f"Failed to read CSV:\n{e}")
+        self.refresh_preview()
+
+    def on_ia_csv_toggle(self):
+        """Toggle between single item and CSV mode."""
+        self.layout_for_mode()
+        self.refresh_preview()
 
     # ----- CSV loading -----
     def load_csv(self, path):
@@ -868,23 +970,52 @@ class App(tk.Tk):
         if internetarchive is None:
             raise ValueError("internetarchive library not available. Install with: pip install internetarchive")
         
-        item_id = self.ia_item_id.get().strip()
-        if not item_id:
-            raise ValueError("Enter an Internet Archive item identifier.")
-        
         output_dir = self.ia_output_dir.get().strip()
         if not output_dir:
             raise ValueError("Select an output directory.")
+        
+        # Set default output directory to documents\batchin\ if not specified
+        if not output_dir:
+            home = Path.home()
+            output_dir = str(home / "Documents" / "batchin")
+            self.ia_output_dir.set(output_dir)
         
         output_path = Path(output_dir)
         if not output_path.exists():
             output_path.mkdir(parents=True, exist_ok=True)
         
-        # Get the item
-        try:
-            item = internetarchive.get_item(item_id)
-        except Exception as e:
-            raise ValueError(f"Failed to get item '{item_id}': {e}")
+        # Get item IDs - either from CSV or single item
+        item_ids = []
+        if self.ia_use_csv.get():
+            # Load from CSV
+            csv_path = self.ia_csv_path.get().strip()
+            if not csv_path:
+                raise ValueError("Select a CSV file with Internet Archive links.")
+            
+            link_col = self.ia_csv_column.get().strip()
+            if not link_col:
+                raise ValueError("Select the column containing Internet Archive links.")
+            
+            try:
+                with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        link = row.get(link_col, "").strip()
+                        if link:
+                            item_id = extract_ia_item_id(link)
+                            if item_id:
+                                item_ids.append(item_id)
+            except Exception as e:
+                raise ValueError(f"Failed to read CSV: {e}")
+            
+            if not item_ids:
+                raise ValueError(f"No valid Internet Archive links found in column '{link_col}'")
+        else:
+            # Single item
+            item_id = self.ia_item_id.get().strip()
+            if not item_id:
+                raise ValueError("Enter an Internet Archive item identifier.")
+            item_ids = [extract_ia_item_id(item_id)]
         
         # Determine which formats to download
         format_choice = self.ia_format.get()
@@ -901,58 +1032,98 @@ class App(tk.Tk):
         if delay < 0:
             delay = 1.5
         
+        # Get subdirectory and HTML parsing options
+        create_subdirs = self.ia_create_subdirs.get()
+        parse_html = self.ia_parse_html.get()
+        
         # Download files with rate limiting
         import time
-        downloaded_count = 0
+        total_downloaded = 0
         
-        # List all files in the item
-        files = list(item.files)
-        if not files:
-            raise ValueError(f"No files found for item '{item_id}'")
-        
-        # Filter files based on format choice
-        files_to_download = []
-        for file in files:
-            file_format = file.get('format', '')
-            file_name = file.get('name', '')
-            
-            # Check if this is a text or PDF file
-            if format_choice == "Text" or format_choice == "Both":
-                if file_format == "Text" or file_name.endswith('.txt'):
-                    files_to_download.append(file)
-            
-            if format_choice == "PDF" or format_choice == "Both":
-                if file_format == "PDF" or file_name.endswith('.pdf'):
-                    # Avoid duplicates
-                    if file not in files_to_download:
-                        files_to_download.append(file)
-        
-        if not files_to_download:
-            raise ValueError(f"No {format_choice.lower()} files found for item '{item_id}'")
-        
-        # Download each file with rate limiting
-        for file in files_to_download:
-            file_name = file.get('name', '')
+        for item_index, item_id in enumerate(item_ids, 1):
+            # Get the item
             try:
-                # Download the file
-                file_obj = item.get_file(file_name)
-                output_file_path = output_path / file_name
-                file_obj.download(file_path=str(output_file_path))
-                downloaded_count += 1
-                
-                # Update status
-                self.status.set(f"Downloaded {downloaded_count}/{len(files_to_download)}: {file_name}")
-                self.update_idletasks()
-                
-                # Rate limiting: wait between downloads
-                if downloaded_count < len(files_to_download):
-                    time.sleep(delay)
+                item = internetarchive.get_item(item_id)
             except Exception as e:
-                # Log error but continue with other files
-                print(f"Error downloading {file_name}: {e}")
+                print(f"Error getting item '{item_id}': {e}")
                 continue
+            
+            # Determine output directory for this item
+            if create_subdirs:
+                item_output_path = output_path / item_id
+                if not item_output_path.exists():
+                    item_output_path.mkdir(parents=True, exist_ok=True)
+            else:
+                item_output_path = output_path
+            
+            # List all files in the item
+            files = list(item.files)
+            if not files:
+                print(f"No files found for item '{item_id}'")
+                continue
+            
+            # Filter files based on format choice
+            files_to_download = []
+            for file in files:
+                file_format = file.get('format', '')
+                file_name = file.get('name', '')
+                
+                # Check if this is a text or PDF file
+                if format_choice == "Text" or format_choice == "Both":
+                    if file_format == "Text" or file_name.endswith('.txt'):
+                        files_to_download.append(file)
+                
+                if format_choice == "PDF" or format_choice == "Both":
+                    if file_format == "PDF" or file_name.endswith('.pdf'):
+                        # Avoid duplicates
+                        if file not in files_to_download:
+                            files_to_download.append(file)
+            
+            if not files_to_download:
+                print(f"No {format_choice.lower()} files found for item '{item_id}'")
+                continue
+            
+            # Download each file with rate limiting
+            for file in files_to_download:
+                file_name = file.get('name', '')
+                try:
+                    # Download the file
+                    file_obj = item.get_file(file_name)
+                    output_file_path = item_output_path / file_name
+                    file_obj.download(file_path=str(output_file_path))
+                    
+                    # Parse HTML if it's a text file and option is enabled
+                    if parse_html and file_name.endswith('.txt'):
+                        try:
+                            # Read the downloaded file
+                            content = output_file_path.read_text(encoding='utf-8', errors='ignore')
+                            
+                            # Check if it's actually HTML
+                            if '<html' in content.lower() or '<body' in content.lower() or '<!doctype' in content.lower():
+                                # Parse HTML to text
+                                parsed_text = parse_html_to_text(content)
+                                # Write back the parsed text
+                                output_file_path.write_text(parsed_text, encoding='utf-8')
+                        except Exception as e:
+                            print(f"Error parsing HTML in {file_name}: {e}")
+                    
+                    total_downloaded += 1
+                    
+                    # Update status
+                    if len(item_ids) > 1:
+                        self.status.set(f"Item {item_index}/{len(item_ids)}: Downloaded {file_name}")
+                    else:
+                        self.status.set(f"Downloaded {total_downloaded}/{len(files_to_download)}: {file_name}")
+                    self.update_idletasks()
+                    
+                    # Rate limiting: wait between downloads
+                    time.sleep(delay)
+                except Exception as e:
+                    # Log error but continue with other files
+                    print(f"Error downloading {file_name}: {e}")
+                    continue
         
-        return downloaded_count
+        return total_downloaded
 
     # ----- preview -----
     def refresh_preview(self):
@@ -1200,6 +1371,56 @@ class App(tk.Tk):
         if internetarchive is None:
             return "Internet Archive library not available. Install with: pip install internetarchive"
         
+        # Check if using CSV mode
+        if self.ia_use_csv.get():
+            csv_path = self.ia_csv_path.get().strip()
+            if not csv_path:
+                return "Select a CSV file with Internet Archive links."
+            
+            link_col = self.ia_csv_column.get().strip()
+            if not link_col:
+                return "Select the column containing Internet Archive links."
+            
+            output_dir = self.ia_output_dir.get().strip()
+            if not output_dir:
+                return "Select an output directory."
+            
+            try:
+                # Load CSV and extract item IDs
+                item_ids = []
+                with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        link = row.get(link_col, "").strip()
+                        if link:
+                            item_id = extract_ia_item_id(link)
+                            if item_id:
+                                item_ids.append(item_id)
+                
+                if not item_ids:
+                    return f"No valid Internet Archive links found in column '{link_col}'"
+                
+                out = []
+                out.append(f"CSV Mode: Found {len(item_ids)} items")
+                out.append(f"Output directory: {output_dir}")
+                out.append(f"Create subdirectories: {self.ia_create_subdirs.get()}")
+                out.append(f"Parse HTML in .txt: {self.ia_parse_html.get()}")
+                out.append(f"Format filter: {self.ia_format.get()}")
+                out.append(f"Delay: {self.ia_delay.get()}s")
+                out.append("\nItems to download:")
+                out.append("=" * 50)
+                
+                for i, item_id in enumerate(item_ids[:PREVIEW_LINES], 1):
+                    out.append(f"{i}. {item_id}")
+                
+                if len(item_ids) > PREVIEW_LINES:
+                    out.append(f"... and {len(item_ids) - PREVIEW_LINES} more")
+                
+                return "\n".join(out)
+            except Exception as e:
+                return f"Error reading CSV: {e}"
+        
+        # Single item mode
         item_id = self.ia_item_id.get().strip()
         if not item_id:
             return "Enter an Internet Archive item identifier to preview available files."
@@ -1209,6 +1430,9 @@ class App(tk.Tk):
             return "Select an output directory."
         
         try:
+            # Extract item ID from URL if necessary
+            item_id = extract_ia_item_id(item_id)
+            
             # Get the item
             item = internetarchive.get_item(item_id)
             
@@ -1226,6 +1450,7 @@ class App(tk.Tk):
             out.append(f"Title: {item.metadata.get('title', 'N/A')}")
             out.append(f"Format filter: {format_choice}")
             out.append(f"Output directory: {output_dir}")
+            out.append(f"Parse HTML in .txt: {self.ia_parse_html.get()}")
             out.append("\nAvailable files to download:")
             out.append("=" * 50)
             
@@ -1265,6 +1490,15 @@ class App(tk.Tk):
     @staticmethod
     def _guess_content_col(headers):
         candidates = ["text","prompt","content","query","question","input","user","instruction"]
+        low = {h.lower(): h for h in headers}
+        for c in candidates:
+            if c in low: return low[c]
+        return None
+
+    @staticmethod
+    def _guess_link_col(headers):
+        """Guess which column contains Internet Archive links."""
+        candidates = ["link", "url", "archive", "ia_link", "internet_archive", "source", "href"]
         low = {h.lower(): h for h in headers}
         for c in candidates:
             if c in low: return low[c]
