@@ -337,6 +337,7 @@ class App(tk.Tk):
         self.ia_format = tk.StringVar(value="Both")
         self.ia_delay = tk.DoubleVar(value=1.5)
         self.ia_use_csv = tk.BooleanVar(value=False)
+        self.ia_use_multi_url = tk.BooleanVar(value=False)
         self.ia_create_subdirs = tk.BooleanVar(value=True)
         self.ia_parse_html = tk.BooleanVar(value=True)
 
@@ -431,22 +432,36 @@ class App(tk.Tk):
 
         # Internet Archive settings
         fr_ia = ttk.LabelFrame(left, text="Internet Archive Settings"); fr_ia.pack(fill="x", padx=10, pady=8)
-        ttk.Checkbutton(fr_ia, text="Use CSV with links", variable=self.ia_use_csv, command=self.on_ia_csv_toggle).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        
+        # Input method selection
+        ttk.Checkbutton(fr_ia, text="Use CSV with links", variable=self.ia_use_csv, command=self.on_ia_input_toggle).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=6)
         ttk.Label(fr_ia, text="Link column (if using CSV):").grid(row=0, column=2, sticky="w", padx=6, pady=6)
         self.cb_ia_csv_column = ttk.Combobox(fr_ia, textvariable=self.ia_csv_column)
         self.cb_ia_csv_column.grid(row=0, column=3, sticky="we", padx=6, pady=6)
         
-        ttk.Label(fr_ia, text="File format:").grid(row=1, column=0, sticky="w", padx=6, pady=6)
-        ttk.Radiobutton(fr_ia, text="Text", variable=self.ia_format, value="Text", command=self.refresh_preview).grid(row=1, column=1, sticky="w", padx=6, pady=6)
-        ttk.Radiobutton(fr_ia, text="PDF", variable=self.ia_format, value="PDF", command=self.refresh_preview).grid(row=1, column=2, sticky="w", padx=6, pady=6)
-        ttk.Radiobutton(fr_ia, text="Both", variable=self.ia_format, value="Both", command=self.refresh_preview).grid(row=1, column=3, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(fr_ia, text="Use multi-line URL input", variable=self.ia_use_multi_url, command=self.on_ia_input_toggle).grid(row=1, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="Paste archive.org URLs below (one per line):").grid(row=1, column=2, columnspan=2, sticky="w", padx=6, pady=6)
         
-        ttk.Label(fr_ia, text="Delay between downloads (seconds):").grid(row=2, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_ia, textvariable=self.ia_delay, width=10).grid(row=2, column=1, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_ia, text="Recommended: 1-2 seconds to avoid rate limiting").grid(row=2, column=2, columnspan=2, sticky="w", padx=6, pady=6)
+        # Multi-URL text input area (will be shown/hidden based on checkbox)
+        self.ia_multi_url_frame = ttk.Frame(fr_ia)
+        self.ia_multi_url_frame.grid(row=2, column=0, columnspan=4, sticky="we", padx=6, pady=6)
+        self.ia_multi_url_frame.columnconfigure(0, weight=1)
+        self.ia_multi_url_text = tk.Text(self.ia_multi_url_frame, height=5, wrap="word")
+        self.ia_multi_url_text.pack(fill="both", expand=True, padx=6, pady=6)
+        self.ia_multi_url_text.insert("1.0", "# Paste archive.org URLs here, one per line\n# Example:\n# https://archive.org/details/ItemID1\n# https://archive.org/details/ItemID2")
+        self.ia_multi_url_frame.grid_remove()  # Hide by default
         
-        ttk.Checkbutton(fr_ia, text="Create subdirectory for each item", variable=self.ia_create_subdirs).grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_ia, text="Parse HTML in .txt files", variable=self.ia_parse_html).grid(row=3, column=2, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="File format:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_ia, text="OCR Text", variable=self.ia_format, value="OCR Text", command=self.refresh_preview).grid(row=3, column=1, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_ia, text="PDF with Text", variable=self.ia_format, value="PDF with Text", command=self.refresh_preview).grid(row=3, column=2, sticky="w", padx=6, pady=6)
+        ttk.Radiobutton(fr_ia, text="Both", variable=self.ia_format, value="Both", command=self.refresh_preview).grid(row=3, column=3, sticky="w", padx=6, pady=6)
+        
+        ttk.Label(fr_ia, text="Delay between downloads (seconds):").grid(row=4, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_ia, textvariable=self.ia_delay, width=10).grid(row=4, column=1, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="Recommended: 1-2 seconds to avoid rate limiting").grid(row=4, column=2, columnspan=2, sticky="w", padx=6, pady=6)
+        
+        ttk.Checkbutton(fr_ia, text="Create subdirectory for each item", variable=self.ia_create_subdirs).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(fr_ia, text="Parse HTML in .txt files", variable=self.ia_parse_html).grid(row=5, column=2, columnspan=2, sticky="w", padx=6, pady=6)
 
         # Docs chunking
         fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); fr_docs.pack(fill="x", padx=10, pady=8)
@@ -544,11 +559,14 @@ class App(tk.Tk):
             self.ent_batch_output_original.grid(row=1, column=1, sticky="we", padx=6, pady=6)
             self.btn_batch_output_original.grid(row=1, column=2, padx=6, pady=6)
         elif mode == "Internet Archive Download":
-            # Show item ID or CSV based on checkbox state
+            # Show item ID, CSV, or multi-URL based on checkbox state
             if self.ia_use_csv.get():
                 self.lbl_ia_csv.grid(row=0, column=0, sticky="w", padx=6, pady=6)
                 self.ent_ia_csv.grid(row=0, column=1, sticky="we", padx=6, pady=6)
                 self.btn_ia_csv.grid(row=0, column=2, padx=6, pady=6)
+            elif self.ia_use_multi_url.get():
+                # Multi-URL mode - no additional fields needed here, text area is in settings
+                pass
             else:
                 self.lbl_ia_item.grid(row=0, column=0, sticky="w", padx=6, pady=6)
                 self.ent_ia_item.grid(row=0, column=1, sticky="we", padx=6, pady=6)
@@ -674,8 +692,23 @@ class App(tk.Tk):
             messagebox.showerror("CSV Error", f"Failed to read CSV:\n{e}")
         self.refresh_preview()
 
-    def on_ia_csv_toggle(self):
-        """Toggle between single item and CSV mode."""
+    def on_ia_input_toggle(self):
+        """Toggle between single item, CSV, and multi-URL modes."""
+        # Ensure only one mode is active at a time
+        if self.ia_use_csv.get() and self.ia_use_multi_url.get():
+            # If both are checked, uncheck the other one
+            sender = self.focus_get()
+            if hasattr(sender, 'cget') and 'multi-line' in str(sender.cget('text')).lower():
+                self.ia_use_csv.set(False)
+            else:
+                self.ia_use_multi_url.set(False)
+        
+        # Show/hide multi-URL text area
+        if self.ia_use_multi_url.get():
+            self.ia_multi_url_frame.grid()
+        else:
+            self.ia_multi_url_frame.grid_remove()
+        
         self.layout_for_mode()
         self.refresh_preview()
 
@@ -987,7 +1020,7 @@ class App(tk.Tk):
         if not output_path.exists():
             output_path.mkdir(parents=True, exist_ok=True)
         
-        # Get item IDs - either from CSV or single item
+        # Get item IDs - either from CSV, multi-URL, or single item
         item_ids = []
         if self.ia_use_csv.get():
             # Load from CSV
@@ -1013,6 +1046,25 @@ class App(tk.Tk):
             
             if not item_ids:
                 raise ValueError(f"No valid Internet Archive links found in column '{link_col}'")
+        elif self.ia_use_multi_url.get():
+            # Load from multi-line text input
+            urls_text = self.ia_multi_url_text.get("1.0", "end").strip()
+            if not urls_text:
+                raise ValueError("Enter at least one Internet Archive URL in the text area.")
+            
+            # Split by lines and process each URL
+            for line in urls_text.split('\n'):
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+                item_id = extract_ia_item_id(line)
+                # Also skip if the extracted ID is still a comment or empty
+                if item_id and not item_id.startswith('#'):
+                    item_ids.append(item_id)
+            
+            if not item_ids:
+                raise ValueError("No valid Internet Archive URLs found in the text input. Make sure to use URLs like: https://archive.org/details/ItemID")
         else:
             # Single item
             item_id = self.ia_item_id.get().strip()
@@ -1026,12 +1078,12 @@ class App(tk.Tk):
         # Determine which formats to download
         format_choice = self.ia_format.get()
         formats_to_download = []
-        if format_choice == "Text":
-            formats_to_download = ["Text"]
-        elif format_choice == "PDF":
-            formats_to_download = ["PDF"]
+        if format_choice == "OCR Text":
+            formats_to_download = ["OCR Text"]
+        elif format_choice == "PDF with Text":
+            formats_to_download = ["PDF with Text"]
         else:  # Both
-            formats_to_download = ["Text", "PDF"]
+            formats_to_download = ["OCR Text", "PDF with Text"]
         
         # Get delay between downloads
         delay = self.ia_delay.get()
@@ -1074,14 +1126,23 @@ class App(tk.Tk):
                 file_format = file.get('format', '')
                 file_name = file.get('name', '')
                 
-                # Check if this is a text or PDF file
-                if format_choice == "Text" or format_choice == "Both":
-                    if file_format == "Text" or file_name.endswith('.txt'):
-                        files_to_download.append(file)
+                # Check if this matches OCR Text formats
+                # Archive.org uses various format names like "Text", "Text PDF", "OCR Search Text", etc.
+                if format_choice == "OCR Text" or format_choice == "Both":
+                    # Match formats that indicate searchable/OCR text
+                    # Common formats: "Text", "OCR Search Text", "Abbyy GZ", "DjVu Text"
+                    if (file_format in ["Text", "OCR Search Text", "Abbyy GZ", "DjVu Text"] or 
+                        'ocr' in file_format.lower() or 
+                        (file_format == "Text" and file_name.endswith('.txt'))):
+                        if file not in files_to_download:
+                            files_to_download.append(file)
                 
-                if format_choice == "PDF" or format_choice == "Both":
-                    if file_format == "PDF" or file_name.endswith('.pdf'):
-                        # Avoid duplicates
+                # Check if this matches PDF with text formats
+                if format_choice == "PDF with Text" or format_choice == "Both":
+                    # Match formats that indicate PDFs with searchable text
+                    # Common formats: "Text PDF", "PDF WITH TEXT", "Additional Text PDF"
+                    if (file_format in ["Text PDF", "PDF WITH TEXT", "Additional Text PDF"] or
+                        ('text' in file_format.lower() and 'pdf' in file_format.lower())):
                         if file not in files_to_download:
                             files_to_download.append(file)
             
@@ -1151,7 +1212,7 @@ class App(tk.Tk):
                 return "TXT Output Format:\n\n=== Entry 1 ===\nInput:\n<user question>\n\nOutput:\n<assistant response>\n=================="
         if mode == "Internet Archive Download":
             fmt = self.ia_format.get()
-            return f"Internet Archive Download Mode\n\nFormat: {fmt}\nDelay: {self.ia_delay.get()}s between downloads\n\nFiles will be downloaded to the output directory with rate limiting."
+            return f"Internet Archive Download Mode\n\nFormat: {fmt}\n  - OCR Text: Searchable text files (OCR SEARCH TEXT, Text, etc.)\n  - PDF with Text: Searchable PDFs (PDF WITH TEXT, Text PDF, etc.)\nDelay: {self.ia_delay.get()}s between downloads\n\nFiles will be downloaded to the output directory with rate limiting."
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
             if mode == "Batch Inference (CSV)" and self.include_params.get():
@@ -1426,6 +1487,49 @@ class App(tk.Tk):
             except Exception as e:
                 return f"Error reading CSV: {e}"
         
+        # Check if using multi-URL mode
+        if self.ia_use_multi_url.get():
+            output_dir = self.ia_output_dir.get().strip()
+            if not output_dir:
+                return "Select an output directory."
+            
+            urls_text = self.ia_multi_url_text.get("1.0", "end").strip()
+            if not urls_text:
+                return "Paste Internet Archive URLs in the text area (one per line)."
+            
+            # Parse URLs
+            item_ids = []
+            for line in urls_text.split('\n'):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                item_id = extract_ia_item_id(line)
+                # Also skip if the extracted ID is still a comment or empty
+                if item_id and not item_id.startswith('#'):
+                    item_ids.append(item_id)
+            
+            if not item_ids:
+                return "No valid Internet Archive URLs found. Use format: https://archive.org/details/ItemID"
+            
+            out = []
+            out.append(f"Multi-URL Mode: Found {len(item_ids)} items")
+            out.append(f"Output directory: {output_dir}")
+            out.append(f"Create subdirectories: {self.ia_create_subdirs.get()}")
+            out.append(f"Parse HTML in .txt: {self.ia_parse_html.get()}")
+            out.append(f"Format filter: {self.ia_format.get()}")
+            out.append(f"  - Targets: OCR SEARCH TEXT and PDF WITH TEXT formats")
+            out.append(f"Delay: {self.ia_delay.get()}s")
+            out.append("\nItems to download:")
+            out.append("=" * 50)
+            
+            for i, item_id in enumerate(item_ids[:PREVIEW_LINES], 1):
+                out.append(f"{i}. {item_id}")
+            
+            if len(item_ids) > PREVIEW_LINES:
+                out.append(f"... and {len(item_ids) - PREVIEW_LINES} more")
+            
+            return "\n".join(out)
+        
         # Single item mode
         item_id = self.ia_item_id.get().strip()
         if not item_id:
@@ -1468,12 +1572,15 @@ class App(tk.Tk):
                 
                 # Check if this file matches the format filter
                 should_include = False
-                if format_choice == "Text" or format_choice == "Both":
-                    if file_format == "Text" or file_name.endswith('.txt'):
+                if format_choice == "OCR Text" or format_choice == "Both":
+                    if (file_format in ["Text", "OCR Search Text", "Abbyy GZ", "DjVu Text"] or 
+                        'ocr' in file_format.lower() or 
+                        (file_format == "Text" and file_name.endswith('.txt'))):
                         should_include = True
                 
-                if format_choice == "PDF" or format_choice == "Both":
-                    if file_format == "PDF" or file_name.endswith('.pdf'):
+                if format_choice == "PDF with Text" or format_choice == "Both":
+                    if (file_format in ["Text PDF", "PDF WITH TEXT", "Additional Text PDF"] or
+                        ('text' in file_format.lower() and 'pdf' in file_format.lower())):
                         should_include = True
                 
                 if should_include:
