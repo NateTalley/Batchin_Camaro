@@ -4,3 +4,4 @@ striprtf
 pdf2image
 pytesseract
 internetarchive
+beautifulsoup4
