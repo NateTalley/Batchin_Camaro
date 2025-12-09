@@ -6,7 +6,7 @@
 # - Document chunking for RAG
 # - Escape sequence decoding (\n, \t, etc.)
 
-import csv, json, os, re, sys, codecs
+import csv, json, os, re, sys, codecs, shutil, urllib.request
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
@@ -334,12 +334,13 @@ class App(tk.Tk):
         self.ia_csv_path = tk.StringVar()
         self.ia_csv_column = tk.StringVar()
         self.ia_output_dir = tk.StringVar()
-        self.ia_format = tk.StringVar(value="Both")
         self.ia_delay = tk.DoubleVar(value=1.5)
         self.ia_use_csv = tk.BooleanVar(value=False)
         self.ia_use_multi_url = tk.BooleanVar(value=False)
         self.ia_create_subdirs = tk.BooleanVar(value=True)
         self.ia_parse_html = tk.BooleanVar(value=True)
+        self.ia_include_media = tk.BooleanVar(value=False)
+        self.ia_media_folder = tk.StringVar(value="extras")
 
         # Menu
         mbar = tk.Menu(self)
@@ -451,17 +452,18 @@ class App(tk.Tk):
         self.ia_multi_url_text.insert("1.0", "# Paste archive.org URLs here, one per line\n# Example:\n# https://archive.org/details/ItemID1\n# https://archive.org/details/ItemID2")
         self.ia_multi_url_frame.grid_remove()  # Hide by default
         
-        ttk.Label(fr_ia, text="File format:").grid(row=3, column=0, sticky="w", padx=6, pady=6)
-        ttk.Radiobutton(fr_ia, text="OCR Text", variable=self.ia_format, value="OCR Text", command=self.refresh_preview).grid(row=3, column=1, sticky="w", padx=6, pady=6)
-        ttk.Radiobutton(fr_ia, text="PDF with Text", variable=self.ia_format, value="PDF with Text", command=self.refresh_preview).grid(row=3, column=2, sticky="w", padx=6, pady=6)
-        ttk.Radiobutton(fr_ia, text="Both", variable=self.ia_format, value="Both", command=self.refresh_preview).grid(row=3, column=3, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="Downloads full .txt files from https://archive.org/download/<item>/").grid(row=3, column=0, columnspan=4, sticky="w", padx=6, pady=6)
+
+        ttk.Checkbutton(fr_ia, text="Also download PDFs/images to separate folder", variable=self.ia_include_media, command=self.refresh_preview).grid(row=4, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="Media subfolder name:").grid(row=4, column=2, sticky="e", padx=6, pady=6)
+        ttk.Entry(fr_ia, textvariable=self.ia_media_folder, width=18).grid(row=4, column=3, sticky="w", padx=6, pady=6)
+
+        ttk.Label(fr_ia, text="Delay between downloads (seconds):").grid(row=5, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(fr_ia, textvariable=self.ia_delay, width=10).grid(row=5, column=1, sticky="w", padx=6, pady=6)
+        ttk.Label(fr_ia, text="Recommended: 1-2 seconds to avoid rate limiting").grid(row=5, column=2, columnspan=2, sticky="w", padx=6, pady=6)
         
-        ttk.Label(fr_ia, text="Delay between downloads (seconds):").grid(row=4, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_ia, textvariable=self.ia_delay, width=10).grid(row=4, column=1, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_ia, text="Recommended: 1-2 seconds to avoid rate limiting").grid(row=4, column=2, columnspan=2, sticky="w", padx=6, pady=6)
-        
-        ttk.Checkbutton(fr_ia, text="Create subdirectory for each item", variable=self.ia_create_subdirs).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_ia, text="Parse HTML in .txt files", variable=self.ia_parse_html).grid(row=5, column=2, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(fr_ia, text="Create subdirectory for each item", variable=self.ia_create_subdirs).grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(fr_ia, text="Parse HTML in .txt files", variable=self.ia_parse_html).grid(row=6, column=2, columnspan=2, sticky="w", padx=6, pady=6)
 
         # Docs chunking
         fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); fr_docs.pack(fill="x", padx=10, pady=8)
@@ -1001,37 +1003,37 @@ class App(tk.Tk):
                     f.write(f"Output:\n{output_content}\n")
                     f.write("=" * TXT_SEPARATOR_LENGTH + "\n\n")
 
+    def _download_file_from_archive(self, item_id: str, file_name: str, dest_path: Path) -> None:
+        """Download a single file from archive.org/download/<item_id>/<file_name>."""
+        url = f"https://archive.org/download/{item_id}/{file_name}"
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(url) as response, open(dest_path, "wb") as fh:
+            shutil.copyfileobj(response, fh)
+
     def _build_ia_download(self) -> int:
-        """Download text files or PDFs from Internet Archive."""
+        """Download full .txt files (plus optional PDFs/images) from Internet Archive."""
         if internetarchive is None:
             raise ValueError("internetarchive library not available. Install with: pip install internetarchive")
-        
+
         output_dir = self.ia_output_dir.get().strip()
         if not output_dir:
             raise ValueError("Select an output directory.")
-        
-        # Set default output directory to documents\batchin\ if not specified
-        if not output_dir:
-            home = Path.home()
-            output_dir = str(home / "Documents" / "batchin")
-            self.ia_output_dir.set(output_dir)
-        
+
         output_path = Path(output_dir)
         if not output_path.exists():
             output_path.mkdir(parents=True, exist_ok=True)
-        
+
         # Get item IDs - either from CSV, multi-URL, or single item
         item_ids = []
         if self.ia_use_csv.get():
-            # Load from CSV
             csv_path = self.ia_csv_path.get().strip()
             if not csv_path:
                 raise ValueError("Select a CSV file with Internet Archive links.")
-            
+
             link_col = self.ia_csv_column.get().strip()
             if not link_col:
                 raise ValueError("Select the column containing Internet Archive links.")
-            
+
             try:
                 with open(csv_path, "r", encoding="utf-8-sig", newline="") as f:
                     reader = csv.DictReader(f)
@@ -1043,30 +1045,25 @@ class App(tk.Tk):
                                 item_ids.append(item_id)
             except Exception as e:
                 raise ValueError(f"Failed to read CSV: {e}")
-            
+
             if not item_ids:
                 raise ValueError(f"No valid Internet Archive links found in column '{link_col}'")
         elif self.ia_use_multi_url.get():
-            # Load from multi-line text input
             urls_text = self.ia_multi_url_text.get("1.0", "end").strip()
             if not urls_text:
                 raise ValueError("Enter at least one Internet Archive URL in the text area.")
-            
-            # Split by lines and process each URL
+
             for line in urls_text.split('\n'):
                 line = line.strip()
-                # Skip empty lines and comments
                 if not line or line.startswith('#'):
                     continue
                 item_id = extract_ia_item_id(line)
-                # Also skip if the extracted ID is still a comment or empty
                 if item_id and not item_id.startswith('#'):
                     item_ids.append(item_id)
-            
+
             if not item_ids:
                 raise ValueError("No valid Internet Archive URLs found in the text input. Make sure to use URLs like: https://archive.org/details/ItemID")
         else:
-            # Single item
             item_id = self.ia_item_id.get().strip()
             if not item_id:
                 raise ValueError("Enter an Internet Archive item identifier.")
@@ -1074,122 +1071,86 @@ class App(tk.Tk):
             if not item_id:
                 raise ValueError("Invalid Internet Archive URL or item identifier.")
             item_ids = [item_id]
-        
-        # Determine which formats to download
-        format_choice = self.ia_format.get()
-        formats_to_download = []
-        if format_choice == "OCR Text":
-            formats_to_download = ["OCR Text"]
-        elif format_choice == "PDF with Text":
-            formats_to_download = ["PDF with Text"]
-        else:  # Both
-            formats_to_download = ["OCR Text", "PDF with Text"]
-        
-        # Get delay between downloads
+
         delay = self.ia_delay.get()
         if delay < 0:
             delay = 1.5
-        
-        # Get subdirectory and HTML parsing options
+
         create_subdirs = self.ia_create_subdirs.get()
         parse_html = self.ia_parse_html.get()
-        
-        # Download files with rate limiting
+        include_media = self.ia_include_media.get()
+        media_folder_name = self.ia_media_folder.get().strip() or "extras"
+        media_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".bmp", ".webp"}
+
         import time
         total_downloaded = 0
-        
+
         for item_index, item_id in enumerate(item_ids, 1):
-            # Get the item
             try:
                 item = internetarchive.get_item(item_id)
             except Exception as e:
                 print(f"Error getting item '{item_id}': {e}")
                 continue
-            
-            # Determine output directory for this item
-            if create_subdirs:
-                item_output_path = output_path / item_id
-                if not item_output_path.exists():
-                    item_output_path.mkdir(parents=True, exist_ok=True)
-            else:
-                item_output_path = output_path
-            
-            # List all files in the item
+
+            item_output_path = output_path / item_id if create_subdirs else output_path
+            item_output_path.mkdir(parents=True, exist_ok=True)
+
             files = list(item.files)
             if not files:
                 print(f"No files found for item '{item_id}'")
                 continue
-            
-            # Filter files based on format choice
-            files_to_download = []
+
+            text_files = []
+            media_files = []
             for file in files:
-                file_format = file.get('format', '')
                 file_name = file.get('name', '')
-                
-                # Check if this matches OCR Text formats
-                # Archive.org uses various format names like "Text", "Text PDF", "OCR Search Text", etc.
-                if format_choice == "OCR Text" or format_choice == "Both":
-                    # Match formats that indicate searchable/OCR text
-                    # Common formats: "Text", "OCR Search Text", "Abbyy GZ", "DjVu Text"
-                    if (file_format in ["Text", "OCR Search Text", "Abbyy GZ", "DjVu Text"] or 
-                        'ocr' in file_format.lower() or 
-                        (file_format == "Text" and file_name.endswith('.txt'))):
-                        if file not in files_to_download:
-                            files_to_download.append(file)
-                
-                # Check if this matches PDF with text formats
-                if format_choice == "PDF with Text" or format_choice == "Both":
-                    # Match formats that indicate PDFs with searchable text
-                    # Common formats: "Text PDF", "PDF WITH TEXT", "Additional Text PDF"
-                    if (file_format in ["Text PDF", "PDF WITH TEXT", "Additional Text PDF"] or
-                        ('text' in file_format.lower() and 'pdf' in file_format.lower())):
-                        if file not in files_to_download:
-                            files_to_download.append(file)
-            
-            if not files_to_download:
-                print(f"No {format_choice.lower()} files found for item '{item_id}'")
+                lower = file_name.lower()
+                if lower.endswith('.txt'):
+                    text_files.append(file_name)
+                elif include_media and any(lower.endswith(ext) for ext in media_extensions):
+                    media_files.append(file_name)
+
+            if not text_files and not media_files:
+                print(f"No matching files found for item '{item_id}'")
                 continue
-            
-            # Download each file with rate limiting
-            for file in files_to_download:
-                file_name = file.get('name', '')
+
+            for idx, file_name in enumerate(text_files, 1):
                 try:
-                    # Download the file
-                    file_obj = item.get_file(file_name)
                     output_file_path = item_output_path / file_name
-                    file_obj.download(file_path=str(output_file_path))
-                    
-                    # Parse HTML if it's a text file and option is enabled
-                    if parse_html and file_name.endswith('.txt'):
+                    self._download_file_from_archive(item_id, file_name, output_file_path)
+
+                    if parse_html and file_name.lower().endswith('.txt'):
                         try:
-                            # Read the downloaded file
                             content = output_file_path.read_text(encoding='utf-8', errors='ignore')
-                            
-                            # Check if it's actually HTML
                             if '<html' in content.lower() or '<body' in content.lower() or '<!doctype' in content.lower():
-                                # Parse HTML to text
                                 parsed_text = parse_html_to_text(content)
-                                # Write back the parsed text
                                 output_file_path.write_text(parsed_text, encoding='utf-8')
                         except Exception as e:
                             print(f"Error parsing HTML in {file_name}: {e}")
-                    
+
                     total_downloaded += 1
-                    
-                    # Update status
-                    if len(item_ids) > 1:
-                        self.status.set(f"Item {item_index}/{len(item_ids)}: Downloaded {file_name}")
-                    else:
-                        self.status.set(f"Downloaded {total_downloaded}/{len(files_to_download)}: {file_name}")
+                    status_prefix = f"Item {item_index}/{len(item_ids)}" if len(item_ids) > 1 else "Download"
+                    self.status.set(f"{status_prefix}: Text {idx}/{len(text_files)} → {file_name}")
                     self.update_idletasks()
-                    
-                    # Rate limiting: wait between downloads
                     time.sleep(delay)
                 except Exception as e:
-                    # Log error but continue with other files
                     print(f"Error downloading {file_name}: {e}")
-                    continue
-        
+
+            if include_media and media_files:
+                media_output_path = item_output_path / media_folder_name
+                media_output_path.mkdir(parents=True, exist_ok=True)
+                for m_idx, file_name in enumerate(media_files, 1):
+                    try:
+                        output_file_path = media_output_path / file_name
+                        self._download_file_from_archive(item_id, file_name, output_file_path)
+                        total_downloaded += 1
+                        status_prefix = f"Item {item_index}/{len(item_ids)}" if len(item_ids) > 1 else "Download"
+                        self.status.set(f"{status_prefix}: Media {m_idx}/{len(media_files)} → {file_name}")
+                        self.update_idletasks()
+                        time.sleep(delay)
+                    except Exception as e:
+                        print(f"Error downloading {file_name}: {e}")
+
         return total_downloaded
 
     # ----- preview -----
@@ -1209,10 +1170,21 @@ class App(tk.Tk):
             if fmt == "CSV":
                 return "CSV Output Format:\n\nInput,Output\n\"What is...\",\"The answer is...\"\n\"How do...\",\"You can...\""
             else:
-                return "TXT Output Format:\n\n=== Entry 1 ===\nInput:\n<user question>\n\nOutput:\n<assistant response>\n=================="
+                return "TXT Output Format:\n\n=== Entry 1 ===\nInput:\n<user question>\n\nOutput:\n<assistant response>\n================"
         if mode == "Internet Archive Download":
-            fmt = self.ia_format.get()
-            return f"Internet Archive Download Mode\n\nFormat: {fmt}\n  - OCR Text: Searchable text files (OCR SEARCH TEXT, Text, etc.)\n  - PDF with Text: Searchable PDFs (PDF WITH TEXT, Text PDF, etc.)\nDelay: {self.ia_delay.get()}s between downloads\n\nFiles will be downloaded to the output directory with rate limiting."
+            media_note = (
+                f"PDFs/images saved to '{self.ia_media_folder.get().strip() or 'extras'}'"
+                if self.ia_include_media.get()
+                else "Media downloads disabled"
+            )
+            return (
+                "Internet Archive Download Mode\n\n"
+                "Downloads: Full .txt files from https://archive.org/download/<item>/\n"
+                f"Extras: {media_note}\n"
+                f"Delay: {self.ia_delay.get()}s between downloads\n"
+                f"Create subdirectories: {self.ia_create_subdirs.get()}\n"
+                f"Parse HTML in .txt: {self.ia_parse_html.get()}"
+            )
         sys_prompt = self.txt_prompt.get("1.0","end").strip()
         if mode in ("Batch Inference (CSV)", "Docs → Batch Inference"):
             if mode == "Batch Inference (CSV)" and self.include_params.get():
@@ -1437,7 +1409,19 @@ class App(tk.Tk):
         """Preview available files for Internet Archive item."""
         if internetarchive is None:
             return "Internet Archive library not available. Install with: pip install internetarchive"
-        
+
+        media_enabled = self.ia_include_media.get()
+        media_folder = self.ia_media_folder.get().strip() or "extras"
+        delay = self.ia_delay.get()
+
+        def _header(title: str, output_dir: str) -> list[str]:
+            out = [title, f"Output directory: {output_dir}"]
+            out.append(f"Create subdirectories: {self.ia_create_subdirs.get()}")
+            out.append(f"Parse HTML in .txt: {self.ia_parse_html.get()}")
+            out.append(f"Download PDFs/images: {media_enabled} (folder: {media_folder})")
+            out.append(f"Delay: {delay}s")
+            return out
+
         # Check if using CSV mode
         if self.ia_use_csv.get():
             csv_path = self.ia_csv_path.get().strip()
@@ -1466,17 +1450,11 @@ class App(tk.Tk):
                 
                 if not item_ids:
                     return f"No valid Internet Archive links found in column '{link_col}'"
-                
-                out = []
-                out.append(f"CSV Mode: Found {len(item_ids)} items")
-                out.append(f"Output directory: {output_dir}")
-                out.append(f"Create subdirectories: {self.ia_create_subdirs.get()}")
-                out.append(f"Parse HTML in .txt: {self.ia_parse_html.get()}")
-                out.append(f"Format filter: {self.ia_format.get()}")
-                out.append(f"Delay: {self.ia_delay.get()}s")
+
+                out = _header(f"CSV Mode: Found {len(item_ids)} items", output_dir)
                 out.append("\nItems to download:")
                 out.append("=" * 50)
-                
+
                 for i, item_id in enumerate(item_ids[:PREVIEW_LINES], 1):
                     out.append(f"{i}. {item_id}")
                 
@@ -1510,18 +1488,11 @@ class App(tk.Tk):
             
             if not item_ids:
                 return "No valid Internet Archive URLs found. Use format: https://archive.org/details/ItemID"
-            
-            out = []
-            out.append(f"Multi-URL Mode: Found {len(item_ids)} items")
-            out.append(f"Output directory: {output_dir}")
-            out.append(f"Create subdirectories: {self.ia_create_subdirs.get()}")
-            out.append(f"Parse HTML in .txt: {self.ia_parse_html.get()}")
-            out.append(f"Format filter: {self.ia_format.get()}")
-            out.append(f"  - Targets: OCR SEARCH TEXT and PDF WITH TEXT formats")
-            out.append(f"Delay: {self.ia_delay.get()}s")
+
+            out = _header(f"Multi-URL Mode: Found {len(item_ids)} items", output_dir)
             out.append("\nItems to download:")
             out.append("=" * 50)
-            
+
             for i, item_id in enumerate(item_ids[:PREVIEW_LINES], 1):
                 out.append(f"{i}. {item_id}")
             
@@ -1542,59 +1513,49 @@ class App(tk.Tk):
         try:
             # Extract item ID from URL if necessary
             item_id = extract_ia_item_id(item_id)
-            
+
             # Get the item
             item = internetarchive.get_item(item_id)
-            
-            # Get format choice
-            format_choice = self.ia_format.get()
-            
+
             # List files
             files = list(item.files)
             if not files:
                 return f"No files found for item '{item_id}'"
-            
-            # Filter and display files
-            out = []
-            out.append(f"Item: {item_id}")
-            out.append(f"Title: {item.metadata.get('title', 'N/A')}")
-            out.append(f"Format filter: {format_choice}")
-            out.append(f"Output directory: {output_dir}")
-            out.append(f"Parse HTML in .txt: {self.ia_parse_html.get()}")
-            out.append("\nAvailable files to download:")
-            out.append("=" * 50)
-            
-            count = 0
+
+            text_files = []
+            media_files = []
+            media_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".bmp", ".webp"}
             for file in files:
-                file_format = file.get('format', '')
                 file_name = file.get('name', '')
-                file_size = file.get('size', 0)
-                
-                # Check if this file matches the format filter
-                should_include = False
-                if format_choice == "OCR Text" or format_choice == "Both":
-                    if (file_format in ["Text", "OCR Search Text", "Abbyy GZ", "DjVu Text"] or 
-                        'ocr' in file_format.lower() or 
-                        (file_format == "Text" and file_name.endswith('.txt'))):
-                        should_include = True
-                
-                if format_choice == "PDF with Text" or format_choice == "Both":
-                    if (file_format in ["Text PDF", "PDF WITH TEXT", "Additional Text PDF"] or
-                        ('text' in file_format.lower() and 'pdf' in file_format.lower())):
-                        should_include = True
-                
-                if should_include:
-                    size_mb = int(file_size) / (1024 * 1024) if file_size else 0
-                    out.append(f"{count + 1}. {file_name} ({file_format}, {size_mb:.2f} MB)")
-                    count += 1
-                    if count >= PREVIEW_LINES:
-                        break
-            
-            if count == 0:
-                out.append(f"No {format_choice.lower()} files found.")
+                lower = file_name.lower()
+                if lower.endswith('.txt'):
+                    text_files.append(file_name)
+                elif media_enabled and any(lower.endswith(ext) for ext in media_extensions):
+                    media_files.append(file_name)
+
+            out = _header(f"Item: {item_id}", output_dir)
+            out.append(f"Title: {item.metadata.get('title', 'N/A')}")
+            out.append("\nText files (full .txt):")
+            out.append("=" * 50)
+            if text_files:
+                for i, name in enumerate(text_files[:PREVIEW_LINES], 1):
+                    out.append(f"{i}. {name}")
+                if len(text_files) > PREVIEW_LINES:
+                    out.append(f"... and {len(text_files) - PREVIEW_LINES} more")
             else:
-                out.append(f"\nTotal files to download: {count}")
-            
+                out.append("No .txt files found")
+
+            if media_enabled:
+                out.append("\nPDFs/Images:")
+                out.append("=" * 50)
+                if media_files:
+                    for i, name in enumerate(media_files[:PREVIEW_LINES], 1):
+                        out.append(f"{i}. {name}")
+                    if len(media_files) > PREVIEW_LINES:
+                        out.append(f"... and {len(media_files) - PREVIEW_LINES} more")
+                else:
+                    out.append("No PDFs or images found")
+
             return "\n".join(out)
         except Exception as e:
             return f"Error accessing item: {e}"
