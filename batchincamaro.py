@@ -743,6 +743,19 @@ class App(tk.Tk):
     # ----- build -----
     def build_output(self):
         mode = self.mode.get()
+        # Internet Archive mode does not need an output path
+        if mode == "Internet Archive Download":
+            try:
+                count = self._build_ia_download()
+            except Exception as e:
+                messagebox.showerror("Download Error", f"Failed to download:\n{e}")
+                self.status.set("Download failed.")
+                return
+
+            messagebox.showinfo("Done", f"Downloaded {count} files to:\n{self.ia_output_dir.get()}")
+            self.status.set(f"Finished: {count} files downloaded")
+            return
+
         out_path = self._ensure_out_path()
         if not out_path: return
         try:
@@ -754,12 +767,6 @@ class App(tk.Tk):
                 self._build_batch_output(out_path)
                 size = Path(out_path).stat().st_size
                 count = 1  # For consistency with other modes
-            elif mode == "Internet Archive Download":
-                count = self._build_ia_download()
-                # For IA downloads, we don't need to check size or out_path
-                messagebox.showinfo("Done", f"Downloaded {count} files to:\n{self.ia_output_dir.get()}")
-                self.status.set(f"Finished: {count} files downloaded")
-                return
             else:
                 with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
                     if mode == "Batch Inference (CSV)":
