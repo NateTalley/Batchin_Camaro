@@ -1012,7 +1012,11 @@ class App(tk.Tk):
 
     def _download_file_from_archive(self, item_id: str, file_name: str, dest_path: Path) -> None:
         """Download a single file from archive.org/download/<item_id>/<file_name>."""
-        url = f"https://archive.org/download/{item_id}/{file_name}"
+        from urllib.parse import quote
+
+        # Quote the filename to avoid spaces/control characters in URLs (keeps item_id as-is)
+        safe_name = quote(file_name)
+        url = f"https://archive.org/download/{item_id}/{safe_name}"
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         with urllib.request.urlopen(url) as response, open(dest_path, "wb") as fh:
             shutil.copyfileobj(response, fh)
