@@ -6,7 +6,7 @@
 # - Document chunking for RAG
 # - Escape sequence decoding (\n, \t, etc.)
 
-import csv, json, os, re, sys, codecs, shutil, urllib.request
+import csv, json, os, re, sys, codecs, shutil, urllib.request, random
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
@@ -1011,14 +1011,39 @@ class App(tk.Tk):
                     f.write("=" * TXT_SEPARATOR_LENGTH + "\n\n")
 
     def _download_file_from_archive(self, item_id: str, file_name: str, dest_path: Path) -> None:
-        """Download a single file from archive.org/download/<item_id>/<file_name>."""
+        """Download a single file from archive.org, preferring internetarchive with a real UA."""
         from urllib.parse import quote
 
-        # Quote the filename to avoid spaces/control characters in URLs (keeps item_id as-is)
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Preferred: internetarchive's downloader (handles cookies/headers)
+        try:
+            internetarchive.download(
+                item_id,
+                files=file_name,
+                destdir=str(dest_path.parent),
+                ignore_existing=False,
+                verbose=False,
+            )
+            if dest_path.exists() and dest_path.stat().st_size > 0:
+                return
+        except Exception:
+            pass  # fallback below
+
+        # Fallback: direct HTTP with explicit User-Agent and quoted filename
         safe_name = quote(file_name)
         url = f"https://archive.org/download/{item_id}/{safe_name}"
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(url) as response, open(dest_path, "wb") as fh:
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        with urllib.request.urlopen(req) as response, open(dest_path, "wb") as fh:
             shutil.copyfileobj(response, fh)
 
     def _build_ia_download(self) -> int:
@@ -1083,9 +1108,12 @@ class App(tk.Tk):
                 raise ValueError("Invalid Internet Archive URL or item identifier.")
             item_ids = [item_id]
 
-        delay = self.ia_delay.get()
-        if delay < 0:
-            delay = 1.5
+        # Respect archive.org by waiting like a real user
+        base_delay = self.ia_delay.get()
+        if base_delay < 0:
+            base_delay = 1.5
+        min_delay = max(3.0, base_delay)
+        max_delay = max(min_delay, 5.0)
 
         create_subdirs = self.ia_create_subdirs.get()
         parse_html = self.ia_parse_html.get()
@@ -1143,7 +1171,7 @@ class App(tk.Tk):
                     status_prefix = f"Item {item_index}/{len(item_ids)}" if len(item_ids) > 1 else "Download"
                     self.status.set(f"{status_prefix}: Text {idx}/{len(text_files)} → {file_name}")
                     self.update_idletasks()
-                    time.sleep(delay)
+                    time.sleep(random.uniform(min_delay, max_delay))
                 except Exception as e:
                     print(f"Error downloading {file_name}: {e}")
 
@@ -1158,7 +1186,7 @@ class App(tk.Tk):
                         status_prefix = f"Item {item_index}/{len(item_ids)}" if len(item_ids) > 1 else "Download"
                         self.status.set(f"{status_prefix}: Media {m_idx}/{len(media_files)} → {file_name}")
                         self.update_idletasks()
-                        time.sleep(delay)
+                        time.sleep(random.uniform(min_delay, max_delay))
                     except Exception as e:
                         print(f"Error downloading {file_name}: {e}")
 
