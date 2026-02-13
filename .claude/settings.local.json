@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)"
+    ]
+  }
+}
+{
+  "apiKey": "sk-ant-api03-YOUR_ACTUAL_KEY_HERE"
+}

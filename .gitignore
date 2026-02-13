@@ -40,3 +40,5 @@ Thumbs.db
 /tmp/
 *.tmp
 *.bak
+metros_batch.jsonl
+.claude\settings.local.json

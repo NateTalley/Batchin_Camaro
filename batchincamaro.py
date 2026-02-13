@@ -48,6 +48,11 @@ DEFAULT_PREFIX = "request-"
 TXT_SEPARATOR_LENGTH = 50
 PREVIEW_TRUNCATE_LENGTH = 200
 
+# Custom exception for rate limiting
+class RateLimitException(Exception):
+    """Raised when Archive.org rate limiting is detected (403 errors)."""
+    pass
+
 MODES = [
     "Batch Inference (CSV)",
     "Finetune: Chat",
@@ -341,6 +346,11 @@ class App(tk.Tk):
         self.ia_parse_html = tk.BooleanVar(value=True)
         self.ia_include_media = tk.BooleanVar(value=False)
         self.ia_media_folder = tk.StringVar(value="extras")
+        self.ia_access_key = tk.StringVar()
+        self.ia_secret_key = tk.StringVar()
+        self.ia_use_auth = tk.BooleanVar(value=False)
+        self.ia_max_size_gb = tk.DoubleVar(value=4.0)
+        self.ia_enable_size_limit = tk.BooleanVar(value=True)
 
         # Menu
         mbar = tk.Menu(self)
@@ -406,23 +416,46 @@ class App(tk.Tk):
         ttk.Entry(fr_paths, textvariable=self.out_path).grid(row=3, column=1, sticky="we", padx=6, pady=6)
         ttk.Button(fr_paths, text="Save As…", command=self.menu_save_output, width=12).grid(row=3, column=2, padx=6, pady=6)
 
-        # Column mapping
-        fr_cols = ttk.LabelFrame(left, text="Column Mapping"); fr_cols.pack(fill="x", padx=10, pady=8); fr_cols.columnconfigure(1, weight=1)
-        self.lbl_content = ttk.Label(fr_cols, text="Content column (user):"); self.cb_content = ttk.Combobox(fr_cols, textvariable=self.content_col)
-        self.lbl_id = ttk.Label(fr_cols, text="ID column (<None> for prefix):"); self.cb_id = ttk.Combobox(fr_cols, textvariable=self.id_col)
-        self.lbl_prefix = ttk.Label(fr_cols, text="If no ID, use prefix:"); self.ent_prefix = ttk.Entry(fr_cols, textvariable=self.prefix_id)
+        # Column mapping - with reduced height
+        fr_cols = ttk.LabelFrame(left, text="Column Mapping")
+        fr_cols.pack(fill="x", padx=10, pady=8)
+        fr_cols.columnconfigure(1, weight=1)
+
+        # Create a canvas and scrollbar for column mapping
+        canvas = tk.Canvas(fr_cols, height=120, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(fr_cols, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.grid(row=0, column=0, sticky="nsew", padx=(6, 0), pady=6)
+        scrollbar.grid(row=0, column=1, sticky="ns", pady=6, padx=(0, 6))
+        fr_cols.rowconfigure(0, weight=1)
+        fr_cols.columnconfigure(0, weight=1)
+
+        # All column mapping widgets go into scrollable_frame
+        scrollable_frame.columnconfigure(1, weight=1)
+        self.lbl_content = ttk.Label(scrollable_frame, text="Content column (user):"); self.cb_content = ttk.Combobox(scrollable_frame, textvariable=self.content_col)
+        self.lbl_id = ttk.Label(scrollable_frame, text="ID column (<None> for prefix):"); self.cb_id = ttk.Combobox(scrollable_frame, textvariable=self.id_col)
+        self.lbl_prefix = ttk.Label(scrollable_frame, text="If no ID, use prefix:"); self.ent_prefix = ttk.Entry(scrollable_frame, textvariable=self.prefix_id)
         # Batch inference parameters
-        self.chk_params = ttk.Checkbutton(fr_cols, text="Include max_tokens & temperature", variable=self.include_params, command=self.refresh_preview)
-        self.lbl_max_tokens = ttk.Label(fr_cols, text="Max tokens:")
-        self.ent_max_tokens = ttk.Entry(fr_cols, textvariable=self.max_tokens, width=10)
-        self.lbl_temperature = ttk.Label(fr_cols, text="Temperature:")
-        self.ent_temperature = ttk.Entry(fr_cols, textvariable=self.temperature, width=10)
+        self.chk_params = ttk.Checkbutton(scrollable_frame, text="Include max_tokens & temperature", variable=self.include_params, command=self.refresh_preview)
+        self.lbl_max_tokens = ttk.Label(scrollable_frame, text="Max tokens:")
+        self.ent_max_tokens = ttk.Entry(scrollable_frame, textvariable=self.max_tokens, width=10)
+        self.lbl_temperature = ttk.Label(scrollable_frame, text="Temperature:")
+        self.ent_temperature = ttk.Entry(scrollable_frame, textvariable=self.temperature, width=10)
         # Finetune mappings
-        self.lbl_asst = ttk.Label(fr_cols, text="Assistant column:"); self.cb_asst = ttk.Combobox(fr_cols, textvariable=self.assistant_col)
-        self.lbl_in_instruct = ttk.Label(fr_cols, text="Input column:"); self.cb_in_instruct = ttk.Combobox(fr_cols, textvariable=self.instruct_in_col)
-        self.lbl_out_instruct = ttk.Label(fr_cols, text="Output column:"); self.cb_out_instruct = ttk.Combobox(fr_cols, textvariable=self.instruct_out_col)
-        self.lbl_prompt_comp = ttk.Label(fr_cols, text="Prompt column:"); self.cb_prompt_comp = ttk.Combobox(fr_cols, textvariable=self.comp_prompt_col)
-        self.lbl_completion_comp = ttk.Label(fr_cols, text="Completion column:"); self.cb_completion_comp = ttk.Combobox(fr_cols, textvariable=self.comp_completion_col)
+        self.lbl_asst = ttk.Label(scrollable_frame, text="Assistant column:"); self.cb_asst = ttk.Combobox(scrollable_frame, textvariable=self.assistant_col)
+        self.lbl_in_instruct = ttk.Label(scrollable_frame, text="Input column:"); self.cb_in_instruct = ttk.Combobox(scrollable_frame, textvariable=self.instruct_in_col)
+        self.lbl_out_instruct = ttk.Label(scrollable_frame, text="Output column:"); self.cb_out_instruct = ttk.Combobox(scrollable_frame, textvariable=self.instruct_out_col)
+        self.lbl_prompt_comp = ttk.Label(scrollable_frame, text="Prompt column:"); self.cb_prompt_comp = ttk.Combobox(scrollable_frame, textvariable=self.comp_prompt_col)
+        self.lbl_completion_comp = ttk.Label(scrollable_frame, text="Completion column:"); self.cb_completion_comp = ttk.Combobox(scrollable_frame, textvariable=self.comp_completion_col)
 
         # Batch output format selection
         fr_batch_output = ttk.LabelFrame(left, text="Batch Output Format"); fr_batch_output.pack(fill="x", padx=10, pady=8)
@@ -458,12 +491,33 @@ class App(tk.Tk):
         ttk.Label(fr_ia, text="Media subfolder name:").grid(row=4, column=2, sticky="e", padx=6, pady=6)
         ttk.Entry(fr_ia, textvariable=self.ia_media_folder, width=18).grid(row=4, column=3, sticky="w", padx=6, pady=6)
 
-        ttk.Label(fr_ia, text="Delay between downloads (seconds):").grid(row=5, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(fr_ia, textvariable=self.ia_delay, width=10).grid(row=5, column=1, sticky="w", padx=6, pady=6)
-        ttk.Label(fr_ia, text="Recommended: 1-2 seconds to avoid rate limiting").grid(row=5, column=2, columnspan=2, sticky="w", padx=6, pady=6)
-        
-        ttk.Checkbutton(fr_ia, text="Create subdirectory for each item", variable=self.ia_create_subdirs).grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=6)
-        ttk.Checkbutton(fr_ia, text="Parse HTML in .txt files", variable=self.ia_parse_html).grid(row=6, column=2, columnspan=2, sticky="w", padx=6, pady=6)
+        # Authentication (collapsible)
+        ttk.Checkbutton(fr_ia, text="Use authenticated downloads (HIGHLY RECOMMENDED for bulk downloads)",
+                       variable=self.ia_use_auth, command=self.on_ia_auth_toggle).grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=6)
+
+        self.ia_auth_frame = ttk.Frame(fr_ia)
+        self.ia_auth_frame.grid(row=6, column=0, columnspan=4, sticky="we", padx=6, pady=6)
+        self.ia_auth_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.ia_auth_frame, text="Access Key:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.ia_auth_frame, textvariable=self.ia_access_key, width=30).grid(row=0, column=1, sticky="we", padx=6, pady=6)
+        ttk.Label(self.ia_auth_frame, text="Secret Key:").grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(self.ia_auth_frame, textvariable=self.ia_secret_key, width=30, show="*").grid(row=1, column=1, sticky="we", padx=6, pady=6)
+        ttk.Label(self.ia_auth_frame, text="Get keys at: https://archive.org/account/s3.php",
+                 font=("", 8, "italic")).grid(row=2, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        self.ia_auth_frame.grid_remove()  # Hide by default
+
+        # Size limit
+        size_limit_frame = ttk.Frame(fr_ia)
+        size_limit_frame.grid(row=7, column=0, columnspan=4, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(size_limit_frame, text="Skip items larger than:", variable=self.ia_enable_size_limit).pack(side="left")
+        ttk.Entry(size_limit_frame, textvariable=self.ia_max_size_gb, width=8).pack(side="left", padx=5)
+        ttk.Label(size_limit_frame, text="GB (prevents huge collections from downloading)").pack(side="left")
+
+        ttk.Label(fr_ia, text="Auto delays: 0.5-1.5s (authenticated) or 4-10s (anonymous) between files",
+                 font=("", 9, "italic")).grid(row=8, column=0, columnspan=4, sticky="w", padx=6, pady=6)
+
+        ttk.Checkbutton(fr_ia, text="Create subdirectory for each item", variable=self.ia_create_subdirs).grid(row=9, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(fr_ia, text="Parse HTML in .txt files", variable=self.ia_parse_html).grid(row=9, column=2, columnspan=2, sticky="w", padx=6, pady=6)
 
         # Docs chunking
         fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); fr_docs.pack(fill="x", padx=10, pady=8)
@@ -495,11 +549,22 @@ class App(tk.Tk):
 
         # Actions
         fr_actions = ttk.Frame(left); fr_actions.pack(fill="x", padx=10, pady=(4,10))
-        ttk.Button(fr_actions, text="Run", command=self.build_output).pack(side="right")                 # NEW
+
+        # Download control buttons (only visible during Archive downloads)
+        self.btn_pause = ttk.Button(fr_actions, text="Pause", command=self.pause_download, state="disabled")
+        self.btn_skip = ttk.Button(fr_actions, text="Skip Item", command=self.skip_current_item, state="disabled")
+
+        ttk.Button(fr_actions, text="Run", command=self.build_output).pack(side="right")
         ttk.Button(fr_actions, text="Build Output", command=self.build_output).pack(side="right", padx=8)
         ttk.Button(fr_actions, text="Refresh Preview", command=self.refresh_preview).pack(side="right", padx=8)
+
         self.status = tk.StringVar(value="Set mode, open source (CSV/docs/txt), choose output, then Run.")
         ttk.Label(left, textvariable=self.status, anchor="w").pack(fill="x", padx=12, pady=(0,10))
+
+        # Download control state
+        self.download_paused = False
+        self.download_stop_requested = False
+        self.download_skip_requested = False
 
         # Right: prefix + preview
         pr = ttk.LabelFrame(right, text=f"Preview (first {PREVIEW_LINES} items — unique parts only)")
@@ -694,6 +759,38 @@ class App(tk.Tk):
             messagebox.showerror("CSV Error", f"Failed to read CSV:\n{e}")
         self.refresh_preview()
 
+    def pause_download(self):
+        """Toggle pause state for downloads."""
+        if self.download_paused:
+            self.download_paused = False
+            self.btn_pause.configure(text="Pause")
+            self._log_to_preview("▶️  Resuming download...")
+            self.status.set("Download resumed")
+        else:
+            self.download_paused = True
+            self.btn_pause.configure(text="Continue")
+            self._log_to_preview("⏸️  Download paused")
+            self.status.set("Download paused - click Continue to resume")
+
+    def skip_current_item(self):
+        """Skip the currently downloading item."""
+        self.download_skip_requested = True
+        self._log_to_preview("⏭️  Skip requested - will skip current item after current file completes")
+        self.status.set("Skipping current item...")
+
+    def stop_download(self):
+        """Stop the download completely."""
+        self.download_stop_requested = True
+        self._log_to_preview("🛑 Stop requested - finishing current file then stopping")
+        self.status.set("Stopping download...")
+
+    def on_ia_auth_toggle(self):
+        """Toggle authentication fields visibility."""
+        if self.ia_use_auth.get():
+            self.ia_auth_frame.grid()
+        else:
+            self.ia_auth_frame.grid_remove()
+
     def on_ia_input_toggle(self):
         """Toggle between single item, CSV, and multi-URL modes."""
         # Ensure only one mode is active at a time
@@ -704,13 +801,13 @@ class App(tk.Tk):
                 self.ia_use_csv.set(False)
             else:
                 self.ia_use_multi_url.set(False)
-        
+
         # Show/hide multi-URL text area
         if self.ia_use_multi_url.get():
             self.ia_multi_url_frame.grid()
         else:
             self.ia_multi_url_frame.grid_remove()
-        
+
         self.layout_for_mode()
         self.refresh_preview()
 
@@ -741,19 +838,63 @@ class App(tk.Tk):
             base = os.path.splitext(os.path.basename(path))[0]; self.out_path.set(f"{base}_batch.jsonl")
 
     # ----- build -----
+    def _log_to_preview(self, message: str, clear: bool = False):
+        """Log a message to the preview pane (thread-safe)."""
+        def update():
+            self.preview_box.configure(state="normal")
+            if clear:
+                self.preview_box.delete("1.0", "end")
+            self.preview_box.insert("end", message + "\n")
+            self.preview_box.see("end")
+            self.preview_box.configure(state="disabled")
+
+        self.after(0, update)
+
     def build_output(self):
         mode = self.mode.get()
         # Internet Archive mode does not need an output path
         if mode == "Internet Archive Download":
-            try:
-                count = self._build_ia_download()
-            except Exception as e:
-                messagebox.showerror("Download Error", f"Failed to download:\n{e}")
-                self.status.set("Download failed.")
-                return
+            # Run download in a thread to prevent UI freezing
+            import threading
+            self.status.set("Starting download...")
 
-            messagebox.showinfo("Done", f"Downloaded {count} files to:\n{self.ia_output_dir.get()}")
-            self.status.set(f"Finished: {count} files downloaded")
+            # Reset download control state
+            self.download_paused = False
+            self.download_stop_requested = False
+            self.download_skip_requested = False
+
+            # Enable control buttons
+            self.btn_pause.configure(state="normal", text="Pause")
+            self.btn_skip.configure(state="normal")
+            self.btn_pause.pack(side="left", padx=5)
+            self.btn_skip.pack(side="left", padx=5)
+
+            # Clear and set up preview pane as log viewer
+            self._log_to_preview("=== Archive.org Download Log ===", clear=True)
+            self._log_to_preview(f"Output directory: {self.ia_output_dir.get()}")
+            self._log_to_preview("")
+
+            def run_download():
+                try:
+                    count = self._build_ia_download()
+                    self._log_to_preview("")
+                    self._log_to_preview(f"=== Download Complete: {count} files ===")
+                    self.after(0, lambda: messagebox.showinfo("Done", f"Downloaded {count} files to:\n{self.ia_output_dir.get()}"))
+                    self.after(0, lambda: self.status.set(f"Finished: {count} files downloaded"))
+                except Exception as e:
+                    self._log_to_preview("")
+                    self._log_to_preview(f"=== Download Failed: {e} ===")
+                    self.after(0, lambda: messagebox.showerror("Download Error", f"Failed to download:\n{e}"))
+                    self.after(0, lambda: self.status.set("Download failed."))
+                finally:
+                    # Disable control buttons when done
+                    self.after(0, lambda: self.btn_pause.configure(state="disabled"))
+                    self.after(0, lambda: self.btn_skip.configure(state="disabled"))
+                    self.after(0, lambda: self.btn_pause.pack_forget())
+                    self.after(0, lambda: self.btn_skip.pack_forget())
+
+            thread = threading.Thread(target=run_download, daemon=True)
+            thread.start()
             return
 
         out_path = self._ensure_out_path()
@@ -1010,41 +1151,154 @@ class App(tk.Tk):
                     f.write(f"Output:\n{output_content}\n")
                     f.write("=" * TXT_SEPARATOR_LENGTH + "\n\n")
 
-    def _download_file_from_archive(self, item_id: str, file_name: str, dest_path: Path) -> None:
-        """Download a single file from archive.org, preferring internetarchive with a real UA."""
+    def _show_rate_limit_dialog(self, wait_seconds: int) -> bool:
+        """Show a countdown dialog for rate limiting. Returns True if user wants to continue, False to abort."""
+        dialog = tk.Toplevel(self)
+        dialog.title("Archive.org Rate Limit Detected")
+        dialog.geometry("450x250")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        # Center the dialog
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        user_choice = {"continue": True}
+        remaining_time = {"value": wait_seconds}
+
+        # Warning icon and message
+        frame = ttk.Frame(dialog, padding=20)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="⚠️ Rate Limit Detected", font=("", 14, "bold")).pack(pady=(0, 10))
+        ttk.Label(frame, text="Archive.org returned a 403 error.\nThe download has been paused to avoid further blocks.",
+                 justify="center").pack(pady=(0, 15))
+
+        timer_label = ttk.Label(frame, text="", font=("", 12))
+        timer_label.pack(pady=(0, 15))
+
+        progress_var = tk.DoubleVar(value=100)
+        progress = ttk.Progressbar(frame, variable=progress_var, maximum=100)
+        progress.pack(fill="x", pady=(0, 15))
+
+        def update_timer():
+            if remaining_time["value"] > 0:
+                mins, secs = divmod(remaining_time["value"], 60)
+                timer_label.config(text=f"Resuming in: {int(mins):02d}:{int(secs):02d}")
+                progress_var.set((remaining_time["value"] / wait_seconds) * 100)
+                remaining_time["value"] -= 1
+                dialog.after(1000, update_timer)
+            else:
+                dialog.destroy()
+
+        def abort():
+            user_choice["continue"] = False
+            dialog.destroy()
+
+        def resume_now():
+            remaining_time["value"] = 0
+            dialog.destroy()
+
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack()
+        ttk.Button(btn_frame, text="Resume Now", command=resume_now).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Abort Download", command=abort).pack(side="left", padx=5)
+
+        update_timer()
+        dialog.wait_window()
+
+        return user_choice["continue"]
+
+    def _download_file_from_archive(self, item_id: str, file_name: str, dest_path: Path, session=None) -> None:
+        """Download a single file from archive.org with retry logic and session support.
+        Raises RateLimitException on persistent 403 errors."""
         from urllib.parse import quote
+        import time
+        import urllib.error
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Preferred: internetarchive's downloader (handles cookies/headers)
-        try:
-            internetarchive.download(
-                item_id,
-                files=file_name,
-                destdir=str(dest_path.parent),
-                ignore_existing=False,
-                verbose=False,
-            )
-            if dest_path.exists() and dest_path.stat().st_size > 0:
-                return
-        except Exception:
-            pass  # fallback below
+        # Retry configuration
+        max_retries = 5
+        base_delay = 2.0
 
-        # Fallback: direct HTTP with explicit User-Agent and quoted filename
+        # Varied User-Agent strings for rotation
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        ]
+
+        # Preferred: internetarchive's downloader with retry logic
+        for attempt in range(max_retries):
+            try:
+                internetarchive.download(
+                    item_id,
+                    files=file_name,
+                    destdir=str(dest_path.parent),
+                    ignore_existing=False,
+                    verbose=False,
+                )
+                if dest_path.exists() and dest_path.stat().st_size > 0:
+                    return
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"Retry {attempt + 1}/{max_retries} for {file_name} after {wait_time:.1f}s...")
+                    time.sleep(wait_time)
+                else:
+                    # Final attempt failed, try fallback
+                    pass
+
+        # Fallback: direct HTTP with session, retry logic, and User-Agent rotation
         safe_name = quote(file_name)
         url = f"https://archive.org/download/{item_id}/{safe_name}"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
+
+        for attempt in range(max_retries):
+            try:
+                ua = user_agents[attempt % len(user_agents)]
+                req = urllib.request.Request(
+                    url,
+                    headers={
+                        "User-Agent": ua,
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.5",
+                        "Accept-Encoding": "gzip, deflate, br",
+                        "DNT": "1",
+                        "Connection": "keep-alive",
+                        "Upgrade-Insecure-Requests": "1",
+                    },
                 )
-            },
-        )
-        with urllib.request.urlopen(req) as response, open(dest_path, "wb") as fh:
-            shutil.copyfileobj(response, fh)
+                with urllib.request.urlopen(req, timeout=30) as response, open(dest_path, "wb") as fh:
+                    shutil.copyfileobj(response, fh)
+                return
+            except urllib.error.HTTPError as e:
+                if e.code == 403:
+                    if attempt < max_retries - 1:
+                        wait_time = base_delay * (2 ** attempt) + random.uniform(1, 5)
+                        print(f"403 error - backing off {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})...")
+                        time.sleep(wait_time)
+                    else:
+                        # Raise special exception to trigger rate limit dialog
+                        raise RateLimitException(f"Persistent 403 Forbidden after {max_retries} retries")
+                elif e.code == 429:
+                    wait_time = 60 + random.uniform(0, 30)
+                    print(f"Rate limited (429) - waiting {wait_time:.1f}s...")
+                    time.sleep(wait_time)
+                else:
+                    raise
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    wait_time = base_delay * (2 ** attempt) + random.uniform(0, 2)
+                    print(f"Error on attempt {attempt + 1}/{max_retries}: {e}. Retrying in {wait_time:.1f}s...")
+                    time.sleep(wait_time)
+                else:
+                    raise
 
     def _build_ia_download(self) -> int:
         """Download full .txt files (plus optional PDFs/images) from Internet Archive."""
@@ -1058,6 +1312,22 @@ class App(tk.Tk):
         output_path = Path(output_dir)
         if not output_path.exists():
             output_path.mkdir(parents=True, exist_ok=True)
+
+        # Configure authenticated session if credentials provided
+        ia_session = None
+        if self.ia_use_auth.get():
+            access_key = self.ia_access_key.get().strip()
+            secret_key = self.ia_secret_key.get().strip()
+            if access_key and secret_key:
+                try:
+                    ia_session = internetarchive.get_session(config={'s3': {'access': access_key, 'secret': secret_key}})
+                    self._log_to_preview("🔐 Using authenticated session (higher rate limits)")
+                except Exception as e:
+                    self._log_to_preview(f"⚠️  Auth failed, using anonymous: {e}")
+            else:
+                self._log_to_preview("⚠️  Auth enabled but keys missing, using anonymous")
+        else:
+            self._log_to_preview("⚠️  Using anonymous downloads (may hit rate limits faster)")
 
         # Get item IDs - either from CSV, multi-URL, or single item
         item_ids = []
@@ -1108,12 +1378,24 @@ class App(tk.Tk):
                 raise ValueError("Invalid Internet Archive URL or item identifier.")
             item_ids = [item_id]
 
-        # Respect archive.org by waiting like a real user
-        base_delay = self.ia_delay.get()
-        if base_delay < 0:
-            base_delay = 1.5
-        min_delay = max(3.0, base_delay)
-        max_delay = max(min_delay, 5.0)
+        # Respect archive.org by waiting like a real user with variable delays
+        # Authenticated users can use much shorter delays
+        if ia_session:
+            # Authenticated: minimal delays, just be polite
+            min_delay = 0.2
+            max_delay = 0.8
+            break_threshold = random.randint(200, 500)  # Take breaks every 200-500 files (much less often)
+            break_duration = (3, 8)  # Short 3-8 second breaks when needed
+            self._log_to_preview("⚡ Using fast authenticated mode (minimal delays)")
+        else:
+            # Anonymous: conservative delays to avoid 403
+            min_delay = 4.0
+            max_delay = 10.0
+            break_threshold = random.randint(10, 20)
+            break_duration = (15, 45)  # Longer breaks for anonymous
+            self._log_to_preview("🐌 Using slow anonymous mode (longer delays to avoid rate limits)")
+
+        files_since_break = 0
 
         create_subdirs = self.ia_create_subdirs.get()
         parse_html = self.ia_parse_html.get()
@@ -1122,13 +1404,59 @@ class App(tk.Tk):
         media_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".bmp", ".webp"}
 
         import time
+        import json
         total_downloaded = 0
 
-        for item_index, item_id in enumerate(item_ids, 1):
+        # Track skipped and errored items
+        skipped_items = []  # (item_id, reason, size_gb)
+        errored_items = []  # (item_id, error_msg)
+
+        # Checkpoint file for resuming downloads
+        checkpoint_file = output_path / ".ia_download_checkpoint.json"
+        completed_items = set()
+
+        # Load checkpoint if exists
+        if checkpoint_file.exists():
             try:
-                item = internetarchive.get_item(item_id)
+                with open(checkpoint_file, 'r') as f:
+                    checkpoint_data = json.load(f)
+                    completed_items = set(checkpoint_data.get('completed_items', []))
+                    self._log_to_preview(f"Resuming download - {len(completed_items)} items already completed")
             except Exception as e:
-                print(f"Error getting item '{item_id}': {e}")
+                self._log_to_preview(f"Could not load checkpoint: {e}")
+
+        for item_index, item_id in enumerate(item_ids, 1):
+            # Check for stop request
+            if self.download_stop_requested:
+                self._log_to_preview("🛑 Download stopped by user")
+                break
+
+            # Check for pause
+            while self.download_paused:
+                time.sleep(0.5)
+                if self.download_stop_requested:
+                    self._log_to_preview("🛑 Download stopped by user")
+                    return total_downloaded
+
+            # Reset skip flag for new item
+            self.download_skip_requested = False
+
+            # Skip if already completed
+            if item_id in completed_items:
+                self._log_to_preview(f"⏭️  Skipping already completed: {item_id}")
+                continue
+
+            self._log_to_preview(f"📦 Processing item {item_index}/{len(item_ids)}: {item_id}")
+
+            try:
+                # Use authenticated session if available
+                if ia_session:
+                    item = ia_session.get_item(item_id)
+                else:
+                    item = internetarchive.get_item(item_id)
+            except Exception as e:
+                self._log_to_preview(f"❌ Error getting item '{item_id}': {e}")
+                errored_items.append((item_id, str(e)))
                 continue
 
             item_output_path = output_path / item_id if create_subdirs else output_path
@@ -1136,27 +1464,67 @@ class App(tk.Tk):
 
             files = list(item.files)
             if not files:
-                print(f"No files found for item '{item_id}'")
+                self._log_to_preview(f"⚠️  No files found for item '{item_id}'")
                 continue
 
+            # Calculate total size and check against limit
             text_files = []
             media_files = []
+            total_size_bytes = 0
+
             for file in files:
                 file_name = file.get('name', '')
+                file_size = int(file.get('size', 0))
                 lower = file_name.lower()
                 if lower.endswith('.txt'):
                     text_files.append(file_name)
+                    total_size_bytes += file_size
                 elif include_media and any(lower.endswith(ext) for ext in media_extensions):
                     media_files.append(file_name)
+                    total_size_bytes += file_size
 
             if not text_files and not media_files:
-                print(f"No matching files found for item '{item_id}'")
+                self._log_to_preview(f"⚠️  No matching files for item '{item_id}'")
                 continue
 
+            # Check size limit
+            if self.ia_enable_size_limit.get():
+                max_size_bytes = self.ia_max_size_gb.get() * 1024 * 1024 * 1024
+                total_size_gb = total_size_bytes / (1024 * 1024 * 1024)
+                if total_size_bytes > max_size_bytes:
+                    self._log_to_preview(f"⚠️  SKIPPING {item_id}: {total_size_gb:.2f} GB exceeds limit of {self.ia_max_size_gb.get()} GB")
+                    self._log_to_preview(f"   ({len(text_files)} text files + {len(media_files)} media files)")
+                    # Track skipped item
+                    skipped_items.append((item_id, f"Size limit ({total_size_gb:.2f} GB > {self.ia_max_size_gb.get()} GB)", total_size_gb))
+                    # Mark as completed so we don't try again on resume
+                    completed_items.add(item_id)
+                    try:
+                        with open(checkpoint_file, 'w') as f:
+                            json.dump({'completed_items': list(completed_items)}, f)
+                    except:
+                        pass
+                    continue
+
             for idx, file_name in enumerate(text_files, 1):
+                # Check for skip request
+                if self.download_skip_requested:
+                    self._log_to_preview(f"⏭️  Skipping remaining files in item: {item_id}")
+                    break
+
+                # Check for stop/pause
+                if self.download_stop_requested:
+                    return total_downloaded
+                while self.download_paused:
+                    time.sleep(0.5)
+
                 try:
                     output_file_path = item_output_path / file_name
-                    self._download_file_from_archive(item_id, file_name, output_file_path)
+                    # Use the internetarchive library's download method (better for auth)
+                    if ia_session:
+                        item.download(files=file_name, destdir=str(item_output_path.parent),
+                                    ignore_existing=False, verbose=False, no_directory=True)
+                    else:
+                        self._download_file_from_archive(item_id, file_name, output_file_path)
 
                     if parse_html and file_name.lower().endswith('.txt'):
                         try:
@@ -1165,30 +1533,187 @@ class App(tk.Tk):
                                 parsed_text = parse_html_to_text(content)
                                 output_file_path.write_text(parsed_text, encoding='utf-8')
                         except Exception as e:
-                            print(f"Error parsing HTML in {file_name}: {e}")
+                            self._log_to_preview(f"   ⚠️  HTML parse error in {file_name}: {e}")
 
                     total_downloaded += 1
+                    files_since_break += 1
                     status_prefix = f"Item {item_index}/{len(item_ids)}" if len(item_ids) > 1 else "Download"
                     self.status.set(f"{status_prefix}: Text {idx}/{len(text_files)} → {file_name}")
+                    self._log_to_preview(f"   ✅ {file_name}")
                     self.update_idletasks()
-                    time.sleep(random.uniform(min_delay, max_delay))
-                except Exception as e:
-                    print(f"Error downloading {file_name}: {e}")
 
-            if include_media and media_files:
+                    # Variable delay with occasional longer breaks
+                    if files_since_break >= break_threshold:
+                        break_time = random.uniform(break_duration[0], break_duration[1])
+                        self._log_to_preview(f"☕ Taking break for {break_time:.1f}s...")
+                        time.sleep(break_time)
+                        files_since_break = 0
+                        if ia_session:
+                            break_threshold = random.randint(200, 500)
+                        else:
+                            break_threshold = random.randint(10, 20)
+                    else:
+                        # Normal delay with more variation
+                        delay = random.uniform(min_delay, max_delay)
+                        # Occasionally add extra pause for anonymous mode only
+                        if not ia_session and random.random() < 0.1:
+                            delay += random.uniform(5, 15)
+                        time.sleep(delay)
+                except RateLimitException as e:
+                    self._log_to_preview(f"   ⚠️  Rate limit detected: {e}")
+                    # Show dialog with 2-5 minute wait time
+                    wait_time = random.randint(120, 300)
+                    should_continue = self._show_rate_limit_dialog(wait_time)
+                    if not should_continue:
+                        self._log_to_preview("❌ Download aborted by user")
+                        return total_downloaded
+                    self._log_to_preview("▶️  Resuming after rate limit pause...")
+                    # Reset break counter after rate limit pause
+                    files_since_break = 0
+                    break_threshold = random.randint(10, 20)
+                except Exception as e:
+                    self._log_to_preview(f"   ❌ Error downloading {file_name}: {e}")
+                    # On error, take a longer break before continuing
+                    time.sleep(random.uniform(10, 20))
+
+            if include_media and media_files and not self.download_skip_requested:
                 media_output_path = item_output_path / media_folder_name
                 media_output_path.mkdir(parents=True, exist_ok=True)
+                self._log_to_preview(f"   📷 Downloading {len(media_files)} media files...")
                 for m_idx, file_name in enumerate(media_files, 1):
+                    # Check for skip request
+                    if self.download_skip_requested:
+                        self._log_to_preview(f"⏭️  Skipping remaining media files in item: {item_id}")
+                        break
+
+                    # Check for stop/pause
+                    if self.download_stop_requested:
+                        return total_downloaded
+                    while self.download_paused:
+                        time.sleep(0.5)
+
                     try:
                         output_file_path = media_output_path / file_name
-                        self._download_file_from_archive(item_id, file_name, output_file_path)
+                        # Use the internetarchive library's download method (better for auth)
+                        if ia_session:
+                            item.download(files=file_name, destdir=str(media_output_path.parent),
+                                        ignore_existing=False, verbose=False, no_directory=True)
+                        else:
+                            self._download_file_from_archive(item_id, file_name, output_file_path)
                         total_downloaded += 1
+                        files_since_break += 1
                         status_prefix = f"Item {item_index}/{len(item_ids)}" if len(item_ids) > 1 else "Download"
                         self.status.set(f"{status_prefix}: Media {m_idx}/{len(media_files)} → {file_name}")
+                        self._log_to_preview(f"   ✅ {file_name}")
                         self.update_idletasks()
-                        time.sleep(random.uniform(min_delay, max_delay))
+
+                        # Variable delay with occasional longer breaks
+                        if files_since_break >= break_threshold:
+                            break_time = random.uniform(break_duration[0], break_duration[1])
+                            self._log_to_preview(f"☕ Taking break for {break_time:.1f}s...")
+                            time.sleep(break_time)
+                            files_since_break = 0
+                            if ia_session:
+                                break_threshold = random.randint(200, 500)
+                            else:
+                                break_threshold = random.randint(10, 20)
+                        else:
+                            delay = random.uniform(min_delay, max_delay)
+                            # Occasionally add extra pause for anonymous mode only
+                            if not ia_session and random.random() < 0.1:
+                                delay += random.uniform(5, 15)
+                            time.sleep(delay)
+                    except RateLimitException as e:
+                        self._log_to_preview(f"   ⚠️  Rate limit detected: {e}")
+                        # Show dialog with 2-5 minute wait time
+                        wait_time = random.randint(120, 300)
+                        should_continue = self._show_rate_limit_dialog(wait_time)
+                        if not should_continue:
+                            self._log_to_preview("❌ Download aborted by user")
+                            return total_downloaded
+                        self._log_to_preview("▶️  Resuming after rate limit pause...")
+                        # Reset break counter after rate limit pause
+                        files_since_break = 0
+                        break_threshold = random.randint(10, 20)
                     except Exception as e:
-                        print(f"Error downloading {file_name}: {e}")
+                        self._log_to_preview(f"   ❌ Error downloading {file_name}: {e}")
+                        time.sleep(random.uniform(10, 20))
+
+            # Mark item as completed and save checkpoint
+            completed_items.add(item_id)
+            self._log_to_preview(f"✓ Completed item: {item_id}")
+            self._log_to_preview("")
+            try:
+                with open(checkpoint_file, 'w') as f:
+                    json.dump({'completed_items': list(completed_items)}, f)
+            except Exception as e:
+                self._log_to_preview(f"⚠️  Could not save checkpoint: {e}")
+
+        # Generate summary report
+        self._log_to_preview("")
+        self._log_to_preview("=" * 70)
+        self._log_to_preview("📊 DOWNLOAD SUMMARY")
+        self._log_to_preview("=" * 70)
+        self._log_to_preview(f"Total items processed: {len(item_ids)}")
+        self._log_to_preview(f"Successfully downloaded: {len(completed_items) - len(skipped_items)}")
+        self._log_to_preview(f"Skipped (size limit): {len(skipped_items)}")
+        self._log_to_preview(f"Errors: {len(errored_items)}")
+        self._log_to_preview(f"Total files downloaded: {total_downloaded}")
+
+        # Save report to text file
+        report_file = output_path / "download_report.txt"
+        try:
+            with open(report_file, 'w', encoding='utf-8') as f:
+                f.write("=" * 70 + "\n")
+                f.write("ARCHIVE.ORG DOWNLOAD REPORT\n")
+                f.write("=" * 70 + "\n\n")
+                f.write(f"Download completed: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Output directory: {output_path}\n\n")
+
+                f.write("SUMMARY:\n")
+                f.write(f"  Total items in list: {len(item_ids)}\n")
+                f.write(f"  Successfully downloaded: {len(completed_items) - len(skipped_items)}\n")
+                f.write(f"  Skipped (size limit): {len(skipped_items)}\n")
+                f.write(f"  Errors: {len(errored_items)}\n")
+                f.write(f"  Total files downloaded: {total_downloaded}\n\n")
+
+                if skipped_items:
+                    f.write("=" * 70 + "\n")
+                    f.write("SKIPPED ITEMS (Size Limit):\n")
+                    f.write("=" * 70 + "\n")
+                    for item_id, reason, size_gb in skipped_items:
+                        f.write(f"  {item_id}\n")
+                        f.write(f"    Size: {size_gb:.2f} GB\n")
+                        f.write(f"    Reason: {reason}\n")
+                        f.write(f"    URL: https://archive.org/details/{item_id}\n\n")
+
+                if errored_items:
+                    f.write("=" * 70 + "\n")
+                    f.write("ERRORED ITEMS:\n")
+                    f.write("=" * 70 + "\n")
+                    for item_id, error_msg in errored_items:
+                        f.write(f"  {item_id}\n")
+                        f.write(f"    Error: {error_msg}\n")
+                        f.write(f"    URL: https://archive.org/details/{item_id}\n\n")
+
+            self._log_to_preview("")
+            self._log_to_preview(f"📄 Report saved to: {report_file}")
+
+            # Show detailed lists in log
+            if skipped_items:
+                self._log_to_preview("")
+                self._log_to_preview("⚠️  SKIPPED ITEMS (Size Limit):")
+                for item_id, reason, size_gb in skipped_items:
+                    self._log_to_preview(f"   • {item_id} ({size_gb:.2f} GB)")
+
+            if errored_items:
+                self._log_to_preview("")
+                self._log_to_preview("❌ ERRORED ITEMS:")
+                for item_id, error_msg in errored_items:
+                    self._log_to_preview(f"   • {item_id}: {error_msg}")
+
+        except Exception as e:
+            self._log_to_preview(f"⚠️  Could not save report file: {e}")
 
         return total_downloaded
 
@@ -1220,7 +1745,7 @@ class App(tk.Tk):
                 "Internet Archive Download Mode\n\n"
                 "Downloads: Full .txt files from https://archive.org/download/<item>/\n"
                 f"Extras: {media_note}\n"
-                f"Delay: {self.ia_delay.get()}s between downloads\n"
+                "Smart delays: 4-10s between files + periodic breaks\n"
                 f"Create subdirectories: {self.ia_create_subdirs.get()}\n"
                 f"Parse HTML in .txt: {self.ia_parse_html.get()}"
             )
@@ -1451,14 +1976,13 @@ class App(tk.Tk):
 
         media_enabled = self.ia_include_media.get()
         media_folder = self.ia_media_folder.get().strip() or "extras"
-        delay = self.ia_delay.get()
 
         def _header(title: str, output_dir: str) -> list[str]:
             out = [title, f"Output directory: {output_dir}"]
             out.append(f"Create subdirectories: {self.ia_create_subdirs.get()}")
             out.append(f"Parse HTML in .txt: {self.ia_parse_html.get()}")
             out.append(f"Download PDFs/images: {media_enabled} (folder: {media_folder})")
-            out.append(f"Delay: {delay}s")
+            out.append("Smart delays: 4-10s between files + periodic breaks")
             return out
 
         # Check if using CSV mode
@@ -1563,37 +2087,63 @@ class App(tk.Tk):
 
             text_files = []
             media_files = []
+            text_size = 0
+            media_size = 0
             media_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".bmp", ".webp"}
+
             for file in files:
                 file_name = file.get('name', '')
+                file_size = int(file.get('size', 0))
                 lower = file_name.lower()
                 if lower.endswith('.txt'):
-                    text_files.append(file_name)
+                    text_files.append((file_name, file_size))
+                    text_size += file_size
                 elif media_enabled and any(lower.endswith(ext) for ext in media_extensions):
-                    media_files.append(file_name)
+                    media_files.append((file_name, file_size))
+                    media_size += file_size
+
+            # Format sizes
+            def format_size(bytes_size):
+                for unit in ['B', 'KB', 'MB', 'GB']:
+                    if bytes_size < 1024.0:
+                        return f"{bytes_size:.1f} {unit}"
+                    bytes_size /= 1024.0
+                return f"{bytes_size:.1f} TB"
 
             out = _header(f"Item: {item_id}", output_dir)
             out.append(f"Title: {item.metadata.get('title', 'N/A')}")
-            out.append("\nText files (full .txt):")
+            out.append(f"Total files in item: {len(files)}")
+
+            # WARNING for large collections
+            total_to_download = len(text_files) + (len(media_files) if media_enabled else 0)
+            if total_to_download > 100:
+                out.append(f"\n⚠️  WARNING: This item has {total_to_download} files to download!")
+                out.append("⚠️  This might be a collection. Consider skipping if not needed.")
+
+            out.append(f"\n📄 Text files: {len(text_files)} files ({format_size(text_size)})")
             out.append("=" * 50)
             if text_files:
-                for i, name in enumerate(text_files[:PREVIEW_LINES], 1):
-                    out.append(f"{i}. {name}")
+                for i, (name, size) in enumerate(text_files[:PREVIEW_LINES], 1):
+                    out.append(f"{i}. {name} ({format_size(size)})")
                 if len(text_files) > PREVIEW_LINES:
                     out.append(f"... and {len(text_files) - PREVIEW_LINES} more")
             else:
                 out.append("No .txt files found")
 
             if media_enabled:
-                out.append("\nPDFs/Images:")
+                out.append(f"\n📷 PDFs/Images: {len(media_files)} files ({format_size(media_size)})")
                 out.append("=" * 50)
                 if media_files:
-                    for i, name in enumerate(media_files[:PREVIEW_LINES], 1):
-                        out.append(f"{i}. {name}")
+                    for i, (name, size) in enumerate(media_files[:PREVIEW_LINES], 1):
+                        out.append(f"{i}. {name} ({format_size(size)})")
                     if len(media_files) > PREVIEW_LINES:
                         out.append(f"... and {len(media_files) - PREVIEW_LINES} more")
                 else:
                     out.append("No PDFs or images found")
+
+            out.append(f"\n💾 Total download size: {format_size(text_size + (media_size if media_enabled else 0))}")
+            if total_to_download > 100:
+                out.append("\n⚠️  TIP: Use 'Skip Item' button during download if this is unwanted!")
 
             return "\n".join(out)
         except Exception as e:
