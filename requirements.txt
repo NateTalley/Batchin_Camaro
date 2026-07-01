@@ -5,3 +5,4 @@ pdf2image
 pytesseract
 internetarchive
 beautifulsoup4
+customtkinter

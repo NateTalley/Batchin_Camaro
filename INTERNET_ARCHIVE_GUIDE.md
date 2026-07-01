@@ -1,24 +1,48 @@
 # Internet Archive Download Mode
 
-This guide explains how to use the Internet Archive Download mode in Batchin' Camaro.
+This guide explains how to use Internet Archive downloading in **Batchin' Camaro** (desktop app).
+
+## Desktop app navigation
+
+The desktop app opens on the **Download** view by default (dark theme, yellow accents):
+
+| Sidebar | Purpose |
+| --- | --- |
+| **Download** | Search archive.org, configure downloads, run batch downloads |
+| **AI Agent** | Local Ollama chat with search/metadata/download tools |
+| **Batch Tools** | CSV → JSONL batch inference, fine-tuning, docs chunking (legacy modes) |
 
 ## Overview
 
-The Internet Archive Download mode allows you to download searchable text files and PDFs from items hosted on the Internet Archive (archive.org). It specifically targets OCR-processed text and searchable PDFs, making it ideal for researchers, archivists, and anyone working with public domain or openly licensed materials.
+Internet Archive downloading lets you download searchable text files and PDFs from items hosted on archive.org. The desktop app adds **keyword search** via `advancedsearch.php` and an **Ollama agent** that can search and queue downloads for you.
+
+## Search (desktop Download view)
+
+1. Open Batchin' Camaro (`python batchincamaro.py` or `batch.ps1`).
+2. On the **Download** sidebar, use the search bar at the top.
+3. Optionally filter by mediatype (`texts`, `audio`, etc.).
+4. Select results → **Add selected to URL list** or **Download selected**.
+
+## AI Agent (desktop)
+
+1. Run [Ollama](https://ollama.com/) locally and pull a model (`ollama pull llama3.1`).
+2. Click **AI Agent** in the sidebar.
+3. Set URL (default `http://127.0.0.1:11434`) and model → **Refresh models**.
+4. Set an **output directory** on the Download tab before asking the agent to download.
+5. Chat, e.g. *Find texts about the California gold rush and download OCR for the top 3.*
 
 ## Prerequisites
 
-The `internetarchive` Python library is automatically installed when you run `setup.bat` or manually install from `requirements.txt`.
+The `internetarchive` Python library is automatically installed when you run `setup.bat` or manually install from `requirements.txt`. The modern UI also requires `customtkinter` (included in `requirements.txt`).
 
 ## Input Methods
 
-There are **three ways** to specify which Internet Archive items to download:
+There are **three ways** to specify which Internet Archive items to download (on the **Download** view):
 
 ### Method 1: Single Item (Default)
 
-1. Open Batchin' Camaro
-2. From the "Mode" dropdown, select **"Internet Archive Download"**
-3. Enter a single item identifier or URL in the **"Item identifier"** field
+1. Open Batchin' Camaro (starts on **Download**)
+2. Enter a single item identifier or URL in the **"Item identifier"** field
 
 Every item on Internet Archive has a unique identifier. You can find this in the URL:
 - Example URL: `https://archive.org/details/georgewashingt00ledggoog`

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Archive Batch Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+  <header>
+    <div class="logo">&#x1F4E6;</div>
+    <div class="header-text">
+      <h1>Archive Downloader</h1>
+      <p class="subtitle">Internet Archive Downloader</p>
+    </div>
+    <button id="settings-btn" class="icon-btn" title="IA auth keys">&#x2699;&#xFE0F;</button>
+    <button id="refresh-btn" class="icon-btn" title="Re-scan tabs">&#x21BB;</button>
+  </header>
+
+  <nav class="tab-bar" id="tab-bar">
+    <button class="tab-btn active" data-tab="download">Download</button>
+    <button class="tab-btn" data-tab="agent">AI Agent</button>
+    <button class="tab-btn" data-tab="batch">Batch Tools</button>
+  </nav>
+
+  <!-- Auth key settings (collapsed by default) -->
+  <section class="settings-panel" id="settings-panel" hidden>
+    <p class="section-label">Internet Archive S3 Keys
+      <a class="help-link" href="https://archive.org/account/s3.php" target="_blank" title="Get your keys at archive.org/account/s3.php">&#x2139;&#xFE0F;</a>
+    </p>
+    <div class="key-row">
+      <label class="key-label" for="access-key">Access key</label>
+      <input id="access-key" class="key-input" type="text" placeholder="e.g. AbCd1234EfGh5678" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="key-row">
+      <label class="key-label" for="secret-key">Secret key</label>
+      <input id="secret-key" class="key-input" type="password" placeholder="32-char secret" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="key-actions">
+      <button id="save-keys-btn" class="save-btn">Save</button>
+      <button id="clear-keys-btn" class="text-btn">Clear</button>
+      <span id="keys-saved-msg" class="keys-saved-msg"></span>
+    </div>
+    <p class="keys-note">Keys are stored locally in <code>storage.local</code> and sent as
+      <code>Authorization: LOW key:secret</code> on every download request.</p>
+
+    <hr class="settings-divider">
+
+    <p class="section-label">Additional formats</p>
+    <div class="fmt-row">
+      <label class="fmt-check"><input type="checkbox" id="want-extra"> Docs &amp; Images</label>
+      <label class="fmt-check"><input type="checkbox" id="want-zip"> Full ZIP archive</label>
+    </div>
+
+    <hr class="settings-divider">
+
+    <p class="section-label">Folder layout</p>
+    <div class="subfolder-row">
+      <span class="subfol-lbl">Per-item subfolders</span>
+      <label class="toggle">
+        <input type="checkbox" id="want-one-folder">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+      </label>
+      <span class="subfol-lbl">One batch folder</span>
+    </div>
+
+    <hr class="settings-divider">
+
+    <p class="section-label">Export unavailable items as</p>
+    <div class="fmt-row">
+      <label class="fmt-check"><input type="checkbox" id="export-txt"> .txt</label>
+      <label class="fmt-check"><input type="checkbox" id="export-csv"> .csv</label>
+      <label class="fmt-check"><input type="checkbox" id="export-json"> .json</label>
+    </div>
+
+    <hr class="settings-divider">
+
+    <div class="size-row">
+      <input type="number" id="size-limit" class="size-input" min="0" step="0.1" value="0">
+      <span class="size-label">GB max per file <span class="size-hint">(0 = unlimited)</span></span>
+    </div>
+  </section>
+
+  <!-- Download tab -->
+  <div class="tab-panel active" id="panel-download">
+    <section class="controls" id="controls">
+      <p class="section-label">Save as</p>
+      <div class="toggle-row">
+        <label class="toggle">
+          <input type="checkbox" id="want-text" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">OCR Text</span>
+        </label>
+        <label class="toggle">
+          <input type="checkbox" id="want-pdf" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Searchable PDF</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="tab-section">
+      <div class="tab-section-header">
+        <span id="tab-count" class="tab-count">Scanning tabs…</span>
+        <div class="selection-btns">
+          <button id="stop-btn" class="stop-btn" hidden>STOP</button>
+          <button id="export-urls-btn" class="text-btn" title="Export every open archive.org tab URL to a CSV">Export URLs</button>
+          <span class="divider">·</span>
+          <button id="select-all" class="text-btn">All</button>
+          <span class="divider">·</span>
+          <button id="select-none" class="text-btn">None</button>
+        </div>
+      </div>
+
+      <div id="empty-state" class="empty-state" style="display:none">
+        No archive.org/details/ tabs open.<br>
+        Open some items on <strong>archive.org</strong> and click &#x21BB;.
+      </div>
+
+      <ul id="tab-list" class="tab-list" style="display:none"></ul>
+    </section>
+
+    <footer class="panel-footer">
+      <button id="download-btn" class="download-btn" disabled>
+        <span id="btn-label">Download &amp; Close Tabs</span>
+      </button>
+      <p id="status-msg" class="status-msg"></p>
+      <button id="export-locked-btn" class="secondary-btn" hidden
+              title="Export the borrow-only / unavailable items from the last run to a CSV">
+        Export Locked List (CSV)
+      </button>
+    </footer>
+  </div>
+
+  <!-- AI Agent tab -->
+  <div class="tab-panel" id="panel-agent">
+    <section class="agent-config card">
+      <p class="section-label">Ollama (local)</p>
+      <div class="agent-config-row">
+        <label for="ollama-url">URL</label>
+        <input id="ollama-url" type="text" value="http://127.0.0.1:11434" spellcheck="false">
+        <label for="ollama-model">Model</label>
+        <select id="ollama-model"><option value="llama3.1">llama3.1</option></select>
+        <button id="refresh-models-btn" class="text-btn">Refresh</button>
+      </div>
+      <p id="agent-status" class="agent-status">Start Ollama locally, then chat to search and download.</p>
+    </section>
+
+    <div id="agent-chat" class="agent-chat card" aria-live="polite"></div>
+
+    <div class="agent-examples">
+      <button class="example-prompt" data-prompt="Search archive.org for public domain books about astronomy">Astronomy books</button>
+      <button class="example-prompt" data-prompt="Find texts about the California gold rush and show me the top 5 results">Gold rush</button>
+    </div>
+
+    <div class="agent-input-row">
+      <input id="agent-input" type="text" placeholder="Ask to search or download from archive.org…" autocomplete="off">
+      <button id="agent-send-btn" class="download-btn">Send</button>
+    </div>
+  </div>
+
+  <!-- Batch Tools tab -->
+  <div class="tab-panel" id="panel-batch">
+    <section class="card batch-bridge">
+      <p class="section-label">Desktop batch inference</p>
+      <p class="bridge-text">Full CSV &#x2192; JSONL batch inference, fine-tuning datasets, and document chunking live in the <strong>Batchin' Camaro</strong> desktop app.</p>
+      <ol class="bridge-steps">
+        <li>Export open tab URLs or locked-item CSVs from the Download tab.</li>
+        <li>Run <code>batch.ps1</code> or <code>python batchincamaro.py</code> from the repo root.</li>
+        <li>Open <strong>Batch Tools</strong> in the desktop app for JSONL builders.</li>
+      </ol>
+      <div class="bridge-actions">
+        <button id="batch-export-urls-btn" class="secondary-btn">Export Tab URLs (CSV)</button>
+        <button id="batch-export-locked-btn" class="secondary-btn" hidden>Export Locked List (CSV)</button>
+      </div>
+      <p class="bridge-hint">Repo path: <code>Batchin_Camaro/</code></p>
+    </section>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

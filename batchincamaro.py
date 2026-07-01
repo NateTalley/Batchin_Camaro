@@ -6,11 +6,22 @@
 # - Document chunking for RAG
 # - Escape sequence decoding (\n, \t, etc.)
 
-import csv, json, os, re, sys, codecs, shutil, urllib.request, random
+import csv, json, os, re, sys, codecs, shutil, urllib.request, random, threading, webbrowser
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
+
+import customtkinter as ctk
+
+import ia_service
+from ollama_agent import OllamaAgent
+from openai_agent import OpenAIAgent
+
+ACCENT = "#ffc107"
+ACCENT_HOVER = "#e6a800"
+BG_DARK = "#1a1a1e"
+SURFACE = "#26262c"
 
 # Optional readers (for Docs mode)
 try:
@@ -52,6 +63,85 @@ PREVIEW_TRUNCATE_LENGTH = 200
 class RateLimitException(Exception):
     """Raised when Archive.org rate limiting is detected (403 errors)."""
     pass
+
+
+class ScrollableDropdown:
+    """A scrolling replacement for a CTkComboBox's non-scrolling dropdown.
+
+    Hijacks the combobox's dropdown trigger and shows a borderless popup with a
+    CTkScrollableFrame of buttons, so long value lists stay usable. Falls back
+    silently to the default dropdown if customtkinter internals differ.
+    """
+
+    def __init__(self, combobox, command=None, max_height: int = 240):
+        self.combo = combobox
+        self.command = command
+        self.max_height = max_height
+        self.values: list[str] = list(getattr(combobox, "_values", []) or [])
+        self.top = None
+        try:
+            # Instance-level override: CTkComboBox._clicked calls this to open.
+            combobox._open_dropdown_menu = self.toggle
+        except Exception:
+            pass
+        combobox.bind("<Destroy>", lambda _e: self.close(), add="+")
+
+    def set_values(self, values) -> None:
+        self.values = list(values or [])
+
+    def toggle(self, _event=None) -> None:
+        if self.top is not None and self.top.winfo_exists():
+            self.close()
+        else:
+            self.open()
+
+    def open(self) -> None:
+        self.close()
+        if not self.values:
+            return
+        c = self.combo
+        self.top = ctk.CTkToplevel(c)
+        self.top.overrideredirect(True)
+        self.top.attributes("-topmost", True)
+        width = max(c.winfo_width(), 180)
+        row_h = 30
+        height = min(self.max_height, max(row_h + 12, len(self.values) * row_h + 12))
+        x = c.winfo_rootx()
+        y = c.winfo_rooty() + c.winfo_height() + 2
+        self.top.geometry(f"{width}x{height}+{x}+{y}")
+        frame = ctk.CTkScrollableFrame(self.top, fg_color=SURFACE, corner_radius=6)
+        frame.pack(fill="both", expand=True)
+        current = c.get()
+        for val in self.values:
+            ctk.CTkButton(
+                frame, text=val, anchor="w", height=26,
+                fg_color=ACCENT if val == current else "transparent",
+                text_color="#1a1a1e" if val == current else "#e8e8ec",
+                hover_color=ACCENT_HOVER,
+                command=lambda v=val: self._choose(v),
+            ).pack(fill="x", padx=2, pady=1)
+        self.top.after(10, self._grab)
+
+    def _grab(self) -> None:
+        if self.top is None or not self.top.winfo_exists():
+            return
+        self.top.bind("<FocusOut>", lambda _e: self.close())
+        try:
+            self.top.focus_set()
+        except Exception:
+            pass
+
+    def _choose(self, val: str) -> None:
+        self.combo.set(val)
+        self.close()
+        if self.command:
+            self.command(val)
+
+    def close(self) -> None:
+        if self.top is not None and self.top.winfo_exists():
+            self.top.destroy()
+        self.top = None
+
 
 MODES = [
     "Batch Inference (CSV)",
@@ -285,15 +375,18 @@ def chunk_sentence_safe(text: str, *, target_words: int, overlap_sents: int, by_
     return chunks
 
 # ------------------ GUI ------------------
-class App(tk.Tk):
+class App(ctk.CTk):
     def __init__(self):
         super().__init__()
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("dark-blue")
+        self.configure(fg_color=BG_DARK)
         self.title(APP_TITLE)
         self.geometry("1280x780")
         self.minsize(1100, 640)
 
-        # Mode
-        self.mode = tk.StringVar(value=MODES[0])
+        # Mode — default to Internet Archive Download
+        self.mode = tk.StringVar(value="Internet Archive Download")
         self.system_prompt = tk.StringVar(value=DEFAULT_PROMPTS.get(self.mode.get(), ""))
 
         # CSV state
@@ -363,13 +456,61 @@ class App(tk.Tk):
         mbar.add_cascade(label="File", menu=filem)
         self.config(menu=mbar)
 
-        # Paned
-        self.pw = ttk.Panedwindow(self, orient="horizontal"); self.pw.pack(fill="both", expand=True)
-        left, right = ttk.Frame(self.pw), ttk.Frame(self.pw)
-        self.pw.add(left, weight=3); self.pw.add(right, weight=2)
+        self.current_view = "download"
+        self.batch_tools_expanded = False
+        self.ia_search_results = []
+        self.agent_provider = tk.StringVar(value="Ollama")
+        self.ollama_base_url = tk.StringVar(value="http://127.0.0.1:11434")
+        self.ollama_model = tk.StringVar(value="llama3.1")
+        self.openai_base_url = tk.StringVar(value="https://api.openai.com/v1")
+        self.openai_model = tk.StringVar(value="gpt-4o-mini")
+        self.openai_api_key = tk.StringVar(value=os.environ.get("OPENAI_API_KEY", ""))
+        self.agent_stream = tk.BooleanVar(value=True)
+        self.agent_ollama = OllamaAgent(on_tool_call=self._agent_tool_handler)
+        self.agent_openai = OpenAIAgent(on_tool_call=self._agent_tool_handler)
+        self.agent = self.agent_ollama
+        self._load_agent_config()
+        self.protocol("WM_DELETE_WINDOW", self._on_app_close)
+
+        outer = ctk.CTkFrame(self, fg_color=BG_DARK, corner_radius=0)
+        outer.pack(fill="both", expand=True)
+
+        sidebar = ctk.CTkFrame(outer, width=148, fg_color=SURFACE, corner_radius=0)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
+
+        nav_btn_kw = dict(width=120, height=36, corner_radius=6, font=ctk.CTkFont(size=13, weight="bold"))
+        self.btn_nav_download = ctk.CTkButton(
+            sidebar, text="Download", fg_color=ACCENT, text_color="#1a1a1e",
+            hover_color=ACCENT_HOVER, command=lambda: self.show_view("download"), **nav_btn_kw)
+        self.btn_nav_download.pack(padx=12, pady=(16, 8))
+        self.btn_nav_agent = ctk.CTkButton(
+            sidebar, text="AI Agent", fg_color="transparent", border_width=1, border_color="#38383f",
+            command=lambda: self.show_view("agent"), **nav_btn_kw)
+        self.btn_nav_agent.pack(padx=12, pady=8)
+        self.btn_nav_batch = ctk.CTkButton(
+            sidebar, text="Batch Tools", fg_color="transparent", border_width=1, border_color="#38383f",
+            command=self.toggle_batch_tools, **nav_btn_kw)
+        self.btn_nav_batch.pack(padx=12, pady=8)
+
+        ctk.CTkLabel(sidebar, text="Batchin' Camaro", font=ctk.CTkFont(size=10),
+                     text_color="#888898").pack(side="bottom", pady=12)
+
+        self.pw = ttk.Panedwindow(outer, orient="horizontal")
+        self.pw.pack(side="left", fill="both", expand=True)
+        self.center = ttk.Frame(self.pw)
+        right = ttk.Frame(self.pw)
+        self.pw.add(self.center, weight=3)
+        self.pw.add(right, weight=2)
+
+        self.download_panel = ctk.CTkFrame(self.center, fg_color="transparent")
+        self.agent_panel = ctk.CTkFrame(self.center, fg_color="transparent")
+        self.batch_panel = ttk.Frame(self.center)
+        left = self.batch_panel
 
         # Mode
         fr_mode = ttk.LabelFrame(left, text="Mode"); fr_mode.pack(fill="x", padx=10, pady=(10,8))
+        self.fr_mode = fr_mode
         ttk.Label(fr_mode, text="Select:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         cb = ttk.Combobox(fr_mode, state="readonly", values=MODES, textvariable=self.mode)
         cb.grid(row=0, column=1, sticky="we", padx=6, pady=6); fr_mode.columnconfigure(1, weight=1)
@@ -377,6 +518,7 @@ class App(tk.Tk):
 
         # Paths
         fr_paths = ttk.LabelFrame(left, text="Paths"); fr_paths.pack(fill="x", padx=10, pady=8); fr_paths.columnconfigure(1, weight=1)
+        self.fr_paths = fr_paths
         # CSV
         self.lbl_in_csv = ttk.Label(fr_paths, text="Input CSV:")
         self.ent_in_csv = ttk.Entry(fr_paths, textvariable=self.csv_path)
@@ -419,6 +561,7 @@ class App(tk.Tk):
         # Column mapping - with reduced height
         fr_cols = ttk.LabelFrame(left, text="Column Mapping")
         fr_cols.pack(fill="x", padx=10, pady=8)
+        self.fr_cols = fr_cols
         fr_cols.columnconfigure(1, weight=1)
 
         # Create a canvas and scrollbar for column mapping
@@ -459,6 +602,7 @@ class App(tk.Tk):
 
         # Batch output format selection
         fr_batch_output = ttk.LabelFrame(left, text="Batch Output Format"); fr_batch_output.pack(fill="x", padx=10, pady=8)
+        self.fr_batch_output = fr_batch_output
         ttk.Label(fr_batch_output, text="Output format:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         ttk.Radiobutton(fr_batch_output, text="CSV", variable=self.batch_output_format, value="CSV", command=self.refresh_preview).grid(row=0, column=1, sticky="w", padx=6, pady=6)
         ttk.Radiobutton(fr_batch_output, text="TXT", variable=self.batch_output_format, value="TXT", command=self.refresh_preview).grid(row=0, column=2, sticky="w", padx=6, pady=6)
@@ -466,6 +610,7 @@ class App(tk.Tk):
 
         # Internet Archive settings
         fr_ia = ttk.LabelFrame(left, text="Internet Archive Settings"); fr_ia.pack(fill="x", padx=10, pady=8)
+        self.fr_ia = fr_ia
         
         # Input method selection
         ttk.Checkbutton(fr_ia, text="Use CSV with links", variable=self.ia_use_csv, command=self.on_ia_input_toggle).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=6)
@@ -521,6 +666,7 @@ class App(tk.Tk):
 
         # Docs chunking
         fr_docs = ttk.LabelFrame(left, text="Docs Chunking"); fr_docs.pack(fill="x", padx=10, pady=8)
+        self.fr_docs = fr_docs
         for i in (1,3,5): fr_docs.columnconfigure(i, weight=1)
         ttk.Label(fr_docs, text="Target words:").grid(row=0, column=0, sticky="w", padx=6, pady=6)
         ttk.Entry(fr_docs, textvariable=self.target_words, width=10).grid(row=0, column=1, sticky="w", padx=6, pady=6)
@@ -538,17 +684,20 @@ class App(tk.Tk):
         # Escape sequence decoding settings
         fr_escape = ttk.LabelFrame(left, text="Escape Sequence Decoding")
         fr_escape.pack(fill="x", padx=10, pady=8)
+        self.fr_escape = fr_escape
         ttk.Label(fr_escape, text="Decodes escape sequences like \\n, \\t, \\r, \\\\, etc. into readable format").pack(padx=6, pady=6, anchor="w")
 
         # Prompt
         fr_prompt = ttk.LabelFrame(left, text="System Prompt (default per mode)")
         fr_prompt.pack(fill="both", expand=True, padx=10, pady=8)
+        self.fr_prompt = fr_prompt
         self.txt_prompt = tk.Text(fr_prompt, height=6, wrap="word")
         self.txt_prompt.pack(fill="both", expand=True, padx=6, pady=6)
         self.txt_prompt.insert("1.0", self.system_prompt.get())
 
         # Actions
         fr_actions = ttk.Frame(left); fr_actions.pack(fill="x", padx=10, pady=(4,10))
+        self.fr_actions = fr_actions
 
         # Download control buttons (only visible during Archive downloads)
         self.btn_pause = ttk.Button(fr_actions, text="Pause", command=self.pause_download, state="disabled")
@@ -585,11 +734,440 @@ class App(tk.Tk):
         self.max_tokens.trace_add("write", lambda *args: self.refresh_preview())
         self.temperature.trace_add("write", lambda *args: self.refresh_preview())
 
+        self._build_download_panel()
+        self._build_agent_panel()
+        self.show_view("download")
         self.layout_for_mode()
         try:
             import ctypes
             if sys.platform.startswith("win"): ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception: pass
+
+    # ----- navigation & panels -----
+    def _apply_nav_highlight(self, active: str) -> None:
+        inactive = dict(fg_color="transparent", border_width=1, border_color="#38383f", text_color=("gray90", "gray90"))
+        active_kw = dict(fg_color=ACCENT, text_color="#1a1a1e", border_width=0)
+        for name, btn in (("download", self.btn_nav_download), ("agent", self.btn_nav_agent), ("batch", self.btn_nav_batch)):
+            if name == active:
+                btn.configure(**active_kw)
+            else:
+                btn.configure(**inactive)
+
+    def show_view(self, view: str) -> None:
+        self.current_view = view
+        if view == "batch":
+            self.batch_tools_expanded = True
+        self.download_panel.pack_forget()
+        self.agent_panel.pack_forget()
+        self.batch_panel.pack_forget()
+
+        if view == "download":
+            self.mode.set("Internet Archive Download")
+            self.on_mode_change()
+            self.download_panel.pack(fill="x", padx=10, pady=(10, 0))
+            self.batch_panel.pack(fill="both", expand=True)
+            self._layout_view_frames(download_only=True)
+            self._apply_nav_highlight("download")
+        elif view == "agent":
+            self.agent_panel.pack(fill="both", expand=True, padx=10, pady=10)
+            self._apply_nav_highlight("agent")
+        elif view == "batch":
+            self.batch_panel.pack(fill="both", expand=True)
+            self._layout_view_frames(download_only=False)
+            self._apply_nav_highlight("batch")
+
+    def toggle_batch_tools(self) -> None:
+        if self.current_view == "batch" and self.batch_tools_expanded:
+            self.show_view("download")
+            self.batch_tools_expanded = False
+        else:
+            self.show_view("batch")
+
+    def _layout_view_frames(self, download_only: bool) -> None:
+        batch_frames = (self.fr_mode, self.fr_cols, self.fr_batch_output, self.fr_docs, self.fr_escape, self.fr_prompt)
+        if download_only:
+            for fr in batch_frames:
+                fr.pack_forget()
+        else:
+            order = [
+                (self.fr_mode, dict(fill="x", padx=10, pady=(10, 8))),
+                (self.fr_paths, dict(fill="x", padx=10, pady=8)),
+                (self.fr_cols, dict(fill="x", padx=10, pady=8)),
+                (self.fr_batch_output, dict(fill="x", padx=10, pady=8)),
+                (self.fr_ia, dict(fill="x", padx=10, pady=8)),
+                (self.fr_docs, dict(fill="x", padx=10, pady=8)),
+                (self.fr_escape, dict(fill="x", padx=10, pady=8)),
+                (self.fr_prompt, dict(fill="both", expand=True, padx=10, pady=8)),
+                (self.fr_actions, dict(fill="x", padx=10, pady=(4, 10))),
+            ]
+            for fr, kw in order:
+                fr.pack_forget()
+            for fr, kw in order:
+                fr.pack(**kw)
+
+    def _build_download_panel(self) -> None:
+        hdr = ctk.CTkLabel(self.download_panel, text="Search Internet Archive",
+                           font=ctk.CTkFont(size=15, weight="bold"))
+        hdr.pack(anchor="w", padx=4, pady=(0, 8))
+
+        row = ctk.CTkFrame(self.download_panel, fg_color="transparent")
+        row.pack(fill="x", padx=4, pady=(0, 6))
+        self.ia_search_query = ctk.CTkEntry(row, placeholder_text="Search keywords…", width=280)
+        self.ia_search_query.pack(side="left", padx=(0, 8))
+        self.ia_search_mediatype = ctk.CTkComboBox(
+            row, values=["(any)", "texts", "audio", "movies", "image", "software", "data"], width=110)
+        self.ia_search_mediatype.set("(any)")
+        self.ia_search_mediatype.pack(side="left", padx=(0, 8))
+        ctk.CTkButton(row, text="Search", width=80, fg_color=ACCENT, text_color="#1a1a1e",
+                      hover_color=ACCENT_HOVER, command=self._run_ia_search).pack(side="left")
+
+        cols = ("identifier", "title", "mediatype")
+        self.ia_results_tree = ttk.Treeview(self.download_panel, columns=cols, show="headings", height=6)
+        for c, w in zip(cols, (140, 320, 80)):
+            self.ia_results_tree.heading(c, text=c.capitalize())
+            self.ia_results_tree.column(c, width=w, stretch=(c == "title"))
+        self.ia_results_tree.pack(fill="x", padx=4, pady=6)
+        self.ia_results_tree.bind("<Double-1>", self._open_selected_ia_item)
+
+        btn_row = ctk.CTkFrame(self.download_panel, fg_color="transparent")
+        btn_row.pack(fill="x", padx=4, pady=(0, 8))
+        ctk.CTkButton(btn_row, text="Add selected to URL list", fg_color=SURFACE, border_width=1,
+                      border_color="#38383f", command=self._add_search_to_queue).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(btn_row, text="Download selected", fg_color=ACCENT, text_color="#1a1a1e",
+                      hover_color=ACCENT_HOVER, command=self._download_search_selected).pack(side="left")
+
+    def _build_agent_panel(self) -> None:
+        prov_row = ctk.CTkFrame(self.agent_panel, fg_color="transparent")
+        prov_row.pack(fill="x", pady=(0, 6))
+        ctk.CTkLabel(prov_row, text="Provider:").pack(side="left", padx=(2, 8))
+        self.seg_provider = ctk.CTkSegmentedButton(
+            prov_row, values=["Ollama", "OpenAI"], variable=self.agent_provider,
+            command=self._on_provider_change,
+            selected_color=ACCENT, selected_hover_color=ACCENT_HOVER, text_color="#1a1a1e")
+        self.seg_provider.pack(side="left")
+        ctk.CTkCheckBox(prov_row, text="Stream", variable=self.agent_stream,
+                        fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                        text_color="#e8e8ec").pack(side="right", padx=6)
+
+        # --- Ollama config ---
+        self.ollama_cfg = ctk.CTkFrame(self.agent_panel, fg_color=SURFACE, corner_radius=8)
+        cfg = self.ollama_cfg
+        ctk.CTkLabel(cfg, text="Ollama (local)", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=5, sticky="w", padx=10, pady=(8, 4))
+        ctk.CTkLabel(cfg, text="URL:").grid(row=1, column=0, sticky="w", padx=10, pady=4)
+        ctk.CTkEntry(cfg, textvariable=self.ollama_base_url, width=220).grid(row=1, column=1, sticky="w", padx=4, pady=4)
+        ctk.CTkLabel(cfg, text="Model:").grid(row=1, column=2, sticky="w", padx=8, pady=4)
+        self.cb_ollama_model = ctk.CTkComboBox(cfg, values=[self.ollama_model.get()], width=160)
+        self.cb_ollama_model.set(self.ollama_model.get())
+        self.cb_ollama_model.grid(row=1, column=3, sticky="w", padx=4, pady=4)
+        self.dd_ollama_model = ScrollableDropdown(
+            self.cb_ollama_model, command=lambda v: self.ollama_model.set(v))
+        ctk.CTkButton(cfg, text="Refresh models", width=110, fg_color=ACCENT, text_color="#1a1a1e",
+                      hover_color=ACCENT_HOVER, command=self._refresh_ollama_models).grid(row=1, column=4, padx=10, pady=4)
+
+        # --- OpenAI-compatible config ---
+        self.openai_cfg = ctk.CTkFrame(self.agent_panel, fg_color=SURFACE, corner_radius=8)
+        ocfg = self.openai_cfg
+        ctk.CTkLabel(ocfg, text="OpenAI-compatible API", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, columnspan=5, sticky="w", padx=10, pady=(8, 4))
+        ctk.CTkLabel(ocfg, text="Base URL:").grid(row=1, column=0, sticky="w", padx=10, pady=4)
+        ctk.CTkEntry(ocfg, textvariable=self.openai_base_url, width=220).grid(row=1, column=1, sticky="w", padx=4, pady=4)
+        ctk.CTkLabel(ocfg, text="Model:").grid(row=1, column=2, sticky="w", padx=8, pady=4)
+        self.cb_openai_model = ctk.CTkComboBox(ocfg, values=[self.openai_model.get()], width=160)
+        self.cb_openai_model.set(self.openai_model.get())
+        self.cb_openai_model.grid(row=1, column=3, sticky="w", padx=4, pady=4)
+        self.dd_openai_model = ScrollableDropdown(
+            self.cb_openai_model, command=lambda v: self.openai_model.set(v))
+        ctk.CTkButton(ocfg, text="Refresh models", width=110, fg_color=ACCENT, text_color="#1a1a1e",
+                      hover_color=ACCENT_HOVER, command=self._refresh_openai_models).grid(row=1, column=4, padx=10, pady=4)
+        ctk.CTkLabel(ocfg, text="API key:").grid(row=2, column=0, sticky="w", padx=10, pady=(0, 8))
+        ctk.CTkEntry(ocfg, textvariable=self.openai_api_key, width=220, show="*",
+                     placeholder_text="sk-... (or leave blank for local servers)").grid(
+            row=2, column=1, columnspan=3, sticky="w", padx=4, pady=(0, 8))
+
+        self._on_provider_change(self.agent_provider.get())
+
+        self.agent_chat = ctk.CTkTextbox(self.agent_panel, height=280, fg_color=SURFACE, text_color="#e8e8ec")
+        self.agent_chat.pack(fill="both", expand=True, pady=(0, 8))
+        self.agent_chat.insert("1.0", "Ask me to search archive.org or download items.\n")
+        self.agent_chat.configure(state="disabled")
+
+        inp_row = ctk.CTkFrame(self.agent_panel, fg_color="transparent")
+        inp_row.pack(fill="x")
+        self.agent_input = ctk.CTkEntry(inp_row, placeholder_text="e.g. Find public domain books about astronomy")
+        self.agent_input.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.agent_input.bind("<Return>", lambda e: self._send_agent_message())
+        ctk.CTkButton(inp_row, text="Send", width=80, fg_color=ACCENT, text_color="#1a1a1e",
+                      hover_color=ACCENT_HOVER, command=self._send_agent_message).pack(side="right")
+
+    def _run_ia_search(self) -> None:
+        query = self.ia_search_query.get().strip()
+        if not query:
+            return
+        mt = self.ia_search_mediatype.get()
+        mediatype = None if mt == "(any)" else mt
+        try:
+            self.ia_search_results = ia_service.search_items(query, mediatype=mediatype, rows=25)
+        except Exception as e:
+            messagebox.showerror("Search Error", str(e))
+            return
+        for row in self.ia_results_tree.get_children():
+            self.ia_results_tree.delete(row)
+        for item in self.ia_search_results:
+            self.ia_results_tree.insert("", "end", iid=item["identifier"],
+                                        values=(item["identifier"], item["title"], item["mediatype"]))
+        self.status.set(f"Found {len(self.ia_search_results)} result(s).")
+
+    def _get_selected_search_ids(self) -> list[str]:
+        return list(self.ia_results_tree.selection())
+
+    def _open_selected_ia_item(self, _event=None) -> None:
+        ids = self._get_selected_search_ids()
+        if ids:
+            webbrowser.open(f"https://archive.org/details/{ids[0]}")
+
+    def _add_search_to_queue(self) -> None:
+        ids = self._get_selected_search_ids()
+        if not ids:
+            messagebox.showinfo("Select items", "Select one or more search results first.")
+            return
+        self.ia_use_multi_url.set(True)
+        self.ia_use_csv.set(False)
+        self.on_ia_input_toggle()
+        lines = [f"https://archive.org/details/{i}" for i in ids]
+        existing = self.ia_multi_url_text.get("1.0", "end").strip()
+        add = "\n".join(lines)
+        if existing and not existing.startswith("#"):
+            self.ia_multi_url_text.insert("end", "\n" + add)
+        else:
+            self.ia_multi_url_text.delete("1.0", "end")
+            self.ia_multi_url_text.insert("1.0", add)
+        self.status.set(f"Added {len(ids)} URL(s) to download queue.")
+
+    def _download_search_selected(self) -> None:
+        ids = self._get_selected_search_ids()
+        if not ids:
+            messagebox.showinfo("Select items", "Select one or more search results first.")
+            return
+        self._add_search_to_queue()
+        self.build_output()
+
+    def _on_provider_change(self, value: str) -> None:
+        self.openai_cfg.pack_forget()
+        self.ollama_cfg.pack_forget()
+        if value == "OpenAI":
+            self.openai_cfg.pack(fill="x", pady=(0, 8), before=self.agent_chat) \
+                if hasattr(self, "agent_chat") else self.openai_cfg.pack(fill="x", pady=(0, 8))
+        else:
+            self.ollama_cfg.pack(fill="x", pady=(0, 8), before=self.agent_chat) \
+                if hasattr(self, "agent_chat") else self.ollama_cfg.pack(fill="x", pady=(0, 8))
+        self._auto_populate_models()
+
+    def _auto_populate_models(self) -> None:
+        """Fetch the active provider's model list in the background (silent)."""
+        provider = self.agent_provider.get()
+
+        def work():
+            try:
+                if provider == "OpenAI":
+                    if not self.openai_api_key.get().strip():
+                        return  # no key yet — user will hit Refresh after pasting one
+                    self.agent_openai.base_url = self.openai_base_url.get().strip().rstrip("/")
+                    self.agent_openai.api_key = self.openai_api_key.get().strip()
+                    models = self.agent_openai.list_models()
+                    cb, dd, var = self.cb_openai_model, self.dd_openai_model, self.openai_model
+                else:
+                    self.agent_ollama.base_url = self.ollama_base_url.get().strip().rstrip("/")
+                    models = self.agent_ollama.list_models()
+                    cb, dd, var = self.cb_ollama_model, self.dd_ollama_model, self.ollama_model
+            except Exception:
+                return  # network/endpoint not ready — stay silent, Refresh still works
+            if not models:
+                return
+
+            def apply():
+                cb.configure(values=models)
+                dd.set_values(models)
+                if cb.get() not in models:
+                    cb.set(models[0])
+                    var.set(models[0])
+            self.after(0, apply)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _active_agent(self):
+        """Sync config from the UI onto the selected provider's agent and return it."""
+        if self.agent_provider.get() == "OpenAI":
+            agent = self.agent_openai
+            agent.base_url = self.openai_base_url.get().strip().rstrip("/")
+            agent.api_key = self.openai_api_key.get().strip()
+            agent.model = self.cb_openai_model.get() or self.openai_model.get()
+        else:
+            agent = self.agent_ollama
+            agent.base_url = self.ollama_base_url.get().strip().rstrip("/")
+            agent.model = self.cb_ollama_model.get() or self.ollama_model.get()
+        self.agent = agent
+        return agent
+
+    def _refresh_ollama_models(self) -> None:
+        self.agent_ollama.base_url = self.ollama_base_url.get().strip().rstrip("/")
+        try:
+            models = self.agent_ollama.list_models()
+            if models:
+                self.cb_ollama_model.configure(values=models)
+                self.dd_ollama_model.set_values(models)
+                self.cb_ollama_model.set(models[0])
+                self.ollama_model.set(models[0])
+        except Exception as e:
+            messagebox.showerror("Ollama", str(e))
+
+    def _refresh_openai_models(self) -> None:
+        self.agent_openai.base_url = self.openai_base_url.get().strip().rstrip("/")
+        self.agent_openai.api_key = self.openai_api_key.get().strip()
+        try:
+            models = self.agent_openai.list_models()
+            if models:
+                self.cb_openai_model.configure(values=models)
+                self.dd_openai_model.set_values(models)
+                if self.cb_openai_model.get() not in models:
+                    self.cb_openai_model.set(models[0])
+                    self.openai_model.set(models[0])
+        except Exception as e:
+            messagebox.showerror("OpenAI", str(e))
+
+    def _agent_tool_handler(self, name: str, args: dict):
+        if name == "start_download":
+            item_ids = args.get("item_ids") or []
+            if not item_ids:
+                return {"error": "No item_ids provided"}
+            self.after(0, lambda: self._agent_start_download(item_ids))
+            return {"status": "queued", "item_ids": item_ids, "count": len(item_ids)}
+        return None
+
+    def _agent_start_download(self, item_ids: list[str]) -> None:
+        if not self.ia_output_dir.get().strip():
+            try:
+                dest = self._ensure_default_download_dir()
+            except Exception as e:
+                messagebox.showerror("Output required",
+                                     f"Could not create a default download folder: {e}\n"
+                                     "Set an output directory on the Download tab first.")
+                return
+            self.ia_output_dir.set(str(dest))
+            self._append_agent_chat(f"  [output] Using default folder: {dest}")
+        urls = "\n".join(f"https://archive.org/details/{i}" for i in item_ids)
+        self.ia_use_multi_url.set(True)
+        self.ia_use_csv.set(False)
+        self.on_ia_input_toggle()
+        self.ia_multi_url_text.delete("1.0", "end")
+        self.ia_multi_url_text.insert("1.0", urls)
+        self.mode.set("Internet Archive Download")
+        self.show_view("download")
+        self.build_output()
+
+    def _ensure_default_download_dir(self) -> Path:
+        """Create (if needed) and return the default agent download folder,
+        ~/Documents/Batchin_Camaro_Downloads, falling back to ~ if Documents
+        is unavailable."""
+        home = Path.home()
+        docs = home / "Documents"
+        base = docs if docs.is_dir() else home
+        dest = base / "Batchin_Camaro_Downloads"
+        dest.mkdir(parents=True, exist_ok=True)
+        return dest
+
+    def _append_agent_chat(self, text: str) -> None:
+        self._insert_agent_chat(text + "\n")
+
+    def _insert_agent_chat(self, text: str) -> None:
+        """Thread-safe raw insert at the end of the chat box (no trailing newline)."""
+        def update():
+            self.agent_chat.configure(state="normal")
+            self.agent_chat.insert("end", text)
+            self.agent_chat.see("end")
+            self.agent_chat.configure(state="disabled")
+        self.after(0, update)
+
+    def _send_agent_message(self) -> None:
+        msg = self.agent_input.get().strip()
+        if not msg:
+            return
+        self.agent_input.delete(0, "end")
+        agent = self._active_agent()
+        streaming = self.agent_stream.get()
+        self._append_agent_chat(f"You: {msg}")
+        self._save_agent_config()
+
+        def run():
+            try:
+                if streaming:
+                    started = {"v": False}
+
+                    def on_delta(chunk: str) -> None:
+                        if not started["v"]:
+                            self._insert_agent_chat("Assistant: ")
+                            started["v"] = True
+                        self._insert_agent_chat(chunk)
+
+                    reply, _ = agent.run_turn(
+                        msg, on_delta=on_delta,
+                        on_tool=lambda line: self._append_agent_chat(f"  [tool] {line}"))
+                    if started["v"]:
+                        self._insert_agent_chat("\n")
+                    else:
+                        self._append_agent_chat(f"Assistant: {reply}")
+                else:
+                    reply, tool_log = agent.run_turn(msg)
+                    for line in tool_log:
+                        self._append_agent_chat(f"  [tool] {line}")
+                    self._append_agent_chat(f"Assistant: {reply}")
+            except Exception as e:
+                self._append_agent_chat(f"Error: {e}")
+
+        threading.Thread(target=run, daemon=True).start()
+
+    # ----- agent config persistence -----
+    def _agent_config_path(self) -> Path:
+        return Path.home() / ".batchincamaro" / "agent_config.json"
+
+    def _load_agent_config(self) -> None:
+        try:
+            path = self._agent_config_path()
+            if not path.exists():
+                return
+            cfg = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        self.agent_provider.set(cfg.get("provider", self.agent_provider.get()))
+        self.ollama_base_url.set(cfg.get("ollama_base_url", self.ollama_base_url.get()))
+        self.ollama_model.set(cfg.get("ollama_model", self.ollama_model.get()))
+        self.openai_base_url.set(cfg.get("openai_base_url", self.openai_base_url.get()))
+        self.openai_model.set(cfg.get("openai_model", self.openai_model.get()))
+        # Env var wins over a stored key so it's never overridden by a stale file.
+        if not os.environ.get("OPENAI_API_KEY") and cfg.get("openai_api_key"):
+            self.openai_api_key.set(cfg["openai_api_key"])
+        self.agent_stream.set(cfg.get("stream", self.agent_stream.get()))
+
+    def _save_agent_config(self) -> None:
+        cfg = {
+            "provider": self.agent_provider.get(),
+            "ollama_base_url": self.ollama_base_url.get().strip(),
+            "ollama_model": (self.cb_ollama_model.get() if hasattr(self, "cb_ollama_model")
+                             else self.ollama_model.get()),
+            "openai_base_url": self.openai_base_url.get().strip(),
+            "openai_model": (self.cb_openai_model.get() if hasattr(self, "cb_openai_model")
+                             else self.openai_model.get()),
+            "openai_api_key": self.openai_api_key.get().strip(),
+            "stream": bool(self.agent_stream.get()),
+        }
+        try:
+            path = self._agent_config_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _on_app_close(self) -> None:
+        self._save_agent_config()
+        self.destroy()
 
     # ----- mode layout -----
     def on_mode_change(self, _=None):

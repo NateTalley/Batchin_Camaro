@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Archive Batch Downloader",
+  "version": "1.0",
+  "description": "Download OCR text and/or searchable PDFs from every open Internet Archive tab, then close those tabs.",
+  "permissions": ["tabs", "downloads", "storage"],
+  "host_permissions": [
+    "*://*.archive.org/*",
+    "http://localhost:11434/*",
+    "http://127.0.0.1:11434/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Archive Batch Downloader",
+    "default_icon": {
+      "16":  "icons/icon16.png",
+      "48":  "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "scripts": ["ia-service.js", "agent-tools.js", "ollama-client.js", "background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "archive-batch-downloader@batchincamaro",
+      "strict_min_version": "115.0"
+    }
+  }
+}
